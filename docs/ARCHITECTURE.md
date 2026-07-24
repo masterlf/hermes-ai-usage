@@ -21,6 +21,12 @@ The backend:
 - opens the active profile's `state.db` using SQLite URI `mode=ro`;
 - enforces `PRAGMA query_only=ON`;
 - selects only usage metadata and counters from `sessions`;
+- aggregates bounded hourly/daily token series in UTC and fills explicit zero-usage buckets;
+- uses session completion time (`ended_at`, falling back to `started_at`) consistently
+  for totals, chart buckets, and bucket-specific session queries;
+- serves bounded bucket-specific rows with explicit count/truncation metadata;
+- derives a collision-aware session suffix and removes the complete identifier before
+  serialization;
 - returns generic failures while logging only exception classes.
 
 ### Hermes Web Dashboard

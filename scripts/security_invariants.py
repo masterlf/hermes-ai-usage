@@ -52,6 +52,22 @@ def python_invariants() -> None:
         fail("account cache must not use a shared fallback profile scope")
     if "unicodedata.category(character)" not in source:
         fail("provider display text must strip invisible Unicode format characters")
+    if "_SESSION_REF_WIDTHS = (12, 16, 20)" not in source:
+        fail("session references must remain bounded and collision-aware")
+    if "_SAFE_SESSION_REF_RE.fullmatch(reference)" not in source:
+        fail("session references must remain restricted to safe ASCII characters")
+    if "width > len(session_id) - 4" not in source:
+        fail("session references must leave at least four identifier characters hidden")
+    if "_global_session_ref_collisions(connection, returned_session_ids)" not in source:
+        fail("session-reference collisions must be checked across the complete database")
+    if "bucket_start: int | None = Query" not in source or '"rows_truncated"' not in source:
+        fail("bucket drill-down must remain bounded and disclose truncation")
+    if "COALESCE(ended_at, started_at) <= ?" not in source:
+        fail("history totals and buckets must reject future-dated sessions")
+    if 'session_id = str(row.pop("id", "") or "")' not in source:
+        fail("complete session identifiers must be removed before serialization")
+    if '"session_ref": references.get(session_id)' not in source:
+        fail("history rows must expose only the bounded session reference")
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):

@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import quote
 
 from agent.account_usage import AccountUsageSnapshot, fetch_account_usage
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from hermes_cli.config import load_config
 from hermes_constants import get_hermes_home
 
@@ -29,6 +29,8 @@ _ACCOUNT_CACHE_TTL_SECONDS = 45.0
 _account_cache: dict[tuple[str, str], tuple[float, AccountUsageSnapshot | None]] = {}
 _account_cache_lock = threading.Lock()
 _SAFE_PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_SAFE_SESSION_REF_RE = re.compile(r"^[A-Za-z0-9._-]{12,20}$")
+_SESSION_REF_WIDTHS = (12, 16, 20)
 
 
 def _utc_now_iso() -> str:
@@ -162,19 +164,103 @@ def _readonly_connection(db_path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _token_history(days: int, limit: int) -> dict[str, Any]:
+def _session_references(
+    session_ids: list[str],
+    global_collisions: dict[int, set[str]] | None = None,
+) -> dict[str, str]:
+    """Build log-searchable suffixes without returning complete session identifiers."""
+    unresolved = {session_id for session_id in session_ids if len(session_id) >= 16}
+    references: dict[str, str] = {}
+    for width in _SESSION_REF_WIDTHS:
+        groups: dict[str, list[str]] = {}
+        for session_id in unresolved:
+            if width > len(session_id) - 4:
+                continue
+            reference = session_id[-width:]
+            if (
+                _SAFE_SESSION_REF_RE.fullmatch(reference)
+                and reference not in (global_collisions or {}).get(width, set())
+            ):
+                groups.setdefault(reference, []).append(session_id)
+        for reference, matches in groups.items():
+            if len(matches) == 1:
+                references[matches[0]] = reference
+        unresolved.difference_update(references)
+        if not unresolved:
+            break
+    return references
+
+
+def _global_session_ref_collisions(
+    connection: sqlite3.Connection,
+    returned_session_ids: list[str],
+) -> dict[int, set[str]]:
+    candidates = {width: set() for width in _SESSION_REF_WIDTHS}
+    for session_id in returned_session_ids:
+        for width in _SESSION_REF_WIDTHS:
+            if width <= len(session_id) - 4:
+                reference = session_id[-width:]
+                if _SAFE_SESSION_REF_RE.fullmatch(reference):
+                    candidates[width].add(reference)
+
+    counts = {width: dict.fromkeys(references, 0) for width, references in candidates.items()}
+    for row in connection.execute("SELECT id FROM sessions"):
+        session_id = str(row["id"] or "")
+        for width, references in candidates.items():
+            reference = session_id[-width:]
+            if reference in references:
+                counts[width][reference] += 1
+    return {
+        width: {reference for reference, count in references.items() if count > 1}
+        for width, references in counts.items()
+    }
+
+
+def _history_series_shape(days: int, points: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    bucket_seconds = 3600 if days == 1 else 86400
+    return {
+        "bucket": "hour" if bucket_seconds == 3600 else "day",
+        "bucket_seconds": bucket_seconds,
+        "timezone": "UTC",
+        "points": points or [],
+    }
+
+
+def _nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _token_history(days: int, limit: int, bucket_start: int | None = None) -> dict[str, Any]:
     db_path = Path(get_hermes_home()) / "state.db"
+    now = time.time()
+    cutoff = now - (days * 86400)
+    bucket_seconds = _history_series_shape(days)["bucket_seconds"]
+    first_bucket = int(cutoff // bucket_seconds) * bucket_seconds
+    last_bucket = int(now // bucket_seconds) * bucket_seconds
+    if bucket_start is not None and (
+        bucket_start % bucket_seconds != 0
+        or bucket_start < first_bucket
+        or bucket_start > last_bucket
+    ):
+        raise ValueError("invalid bucket")
+    selected_end = bucket_start + bucket_seconds if bucket_start is not None else None
     if not db_path.exists():
         return {
             "available": False,
             "reason": "Hermes state.db was not found.",
             "rows": [],
+            "row_count": 0,
+            "rows_truncated": False,
+            "selected_bucket_start": bucket_start,
             "totals": {},
+            "series": _history_series_shape(days),
         }
-
-    cutoff = time.time() - (days * 86400)
     query = """
         SELECT
+            id,
             source,
             model,
             billing_provider,
@@ -187,11 +273,18 @@ def _token_history(days: int, limit: int) -> dict[str, Any]:
             COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
             COALESCE(api_call_count, 0) AS api_call_count
         FROM sessions
-        WHERE started_at >= ?
+        WHERE COALESCE(ended_at, started_at) >= ?
+          AND COALESCE(ended_at, started_at) <= ?
           AND (
               COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
               + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
           ) > 0
+          AND (
+              ? IS NULL OR (
+                  COALESCE(ended_at, started_at) >= ?
+                  AND COALESCE(ended_at, started_at) < ?
+              )
+          )
         ORDER BY COALESCE(ended_at, started_at) DESC
         LIMIT ?
     """
@@ -209,32 +302,98 @@ def _token_history(days: int, limit: int) -> dict[str, Any]:
                 + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
             ), 0) AS total_tokens
         FROM sessions
-        WHERE started_at >= ?
+        WHERE COALESCE(ended_at, started_at) >= ?
+          AND COALESCE(ended_at, started_at) <= ?
           AND (
               COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
               + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
           ) > 0
     """
+    series_query = """
+        SELECT
+            CAST(COALESCE(ended_at, started_at) / ? AS INTEGER) * ? AS bucket_start,
+            COUNT(*) AS sessions,
+            COALESCE(SUM(api_call_count), 0) AS api_calls,
+            COALESCE(SUM(input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+            COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+            COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+            COALESCE(SUM(
+                COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
+                + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+            ), 0) AS total_tokens
+        FROM sessions
+        WHERE COALESCE(ended_at, started_at) >= ?
+          AND COALESCE(ended_at, started_at) <= ?
+          AND (
+              COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
+              + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+          ) > 0
+        GROUP BY bucket_start
+        ORDER BY bucket_start
+    """
+    row_count_query = """
+        SELECT COUNT(*)
+        FROM sessions
+        WHERE COALESCE(ended_at, started_at) >= ?
+          AND COALESCE(ended_at, started_at) <= ?
+          AND (
+              COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
+              + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+          ) > 0
+          AND (
+              ? IS NULL OR (
+                  COALESCE(ended_at, started_at) >= ?
+                  AND COALESCE(ended_at, started_at) < ?
+              )
+          )
+    """
 
     connection: sqlite3.Connection | None = None
     try:
         connection = _readonly_connection(db_path)
-        raw_rows = [dict(row) for row in connection.execute(query, (cutoff, limit)).fetchall()]
-        aggregate = dict(connection.execute(aggregate_query, (cutoff,)).fetchone())
+        raw_rows = [
+            dict(row)
+            for row in connection.execute(
+                query,
+                (cutoff, now, bucket_start, bucket_start, selected_end, limit),
+            ).fetchall()
+        ]
+        aggregate = dict(connection.execute(aggregate_query, (cutoff, now)).fetchone())
+        row_count = _nonnegative_int(
+            connection.execute(
+                row_count_query,
+                (cutoff, now, bucket_start, bucket_start, selected_end),
+            ).fetchone()[0]
+        )
+        raw_points = [
+            dict(row)
+            for row in connection.execute(
+                series_query,
+                (bucket_seconds, bucket_seconds, cutoff, now),
+            ).fetchall()
+        ]
+        returned_session_ids = [str(row.get("id") or "") for row in raw_rows]
+        global_collisions = _global_session_ref_collisions(connection, returned_session_ids)
     except (sqlite3.Error, OSError) as exc:
         logger.warning("Token history query failed (%s)", type(exc).__name__)
         return {
             "available": False,
             "reason": "Hermes token history could not be read.",
             "rows": [],
+            "row_count": 0,
+            "rows_truncated": False,
+            "selected_bucket_start": bucket_start,
             "totals": {},
+            "series": _history_series_shape(days),
         }
     finally:
         if connection is not None:
             connection.close()
 
     totals: dict[str, Any] = {
-        key: int(aggregate.get(key) or 0)
+        key: _nonnegative_int(aggregate.get(key))
         for key in (
             "sessions",
             "api_calls",
@@ -246,11 +405,62 @@ def _token_history(days: int, limit: int) -> dict[str, Any]:
             "total_tokens",
         )
     }
+    points_by_start = {
+        _nonnegative_int(point.get("bucket_start")): {
+            key: _nonnegative_int(point.get(key))
+            for key in (
+                "sessions",
+                "api_calls",
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_write_tokens",
+                "reasoning_tokens",
+                "total_tokens",
+            )
+        }
+        for point in raw_points
+    }
+    points = []
+    for point_start in range(first_bucket, last_bucket + bucket_seconds, bucket_seconds):
+        point = points_by_start.get(point_start, {})
+        points.append(
+            {
+                "bucket_start": point_start,
+                **{
+                    key: _nonnegative_int(point.get(key))
+                    for key in (
+                        "sessions",
+                        "api_calls",
+                        "input_tokens",
+                        "output_tokens",
+                        "cache_read_tokens",
+                        "cache_write_tokens",
+                        "reasoning_tokens",
+                        "total_tokens",
+                    )
+                },
+            }
+        )
+    references = _session_references(
+        returned_session_ids,
+        global_collisions,
+    )
     rows = []
     for row in raw_rows:
+        session_id = str(row.pop("id", "") or "")
         provider = _safe_provider(row.pop("billing_provider", None)) or "unknown"
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "cache_write_tokens",
+            "reasoning_tokens",
+            "api_call_count",
+        ):
+            row[key] = _nonnegative_int(row.get(key))
         token_total = sum(
-            int(row.get(key) or 0)
+            row[key]
             for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
         )
         item = {
@@ -259,9 +469,19 @@ def _token_history(days: int, limit: int) -> dict[str, Any]:
             "model": _safe_text(row.get("model"), 160) or "unknown",
             "total_tokens": token_total,
             "provider": provider,
+            "session_ref": references.get(session_id),
         }
         rows.append(item)
-    return {"available": True, "days": days, "rows": rows, "totals": totals}
+    return {
+        "available": True,
+        "days": days,
+        "rows": rows,
+        "row_count": row_count,
+        "rows_truncated": row_count > len(rows),
+        "selected_bucket_start": bucket_start,
+        "totals": totals,
+        "series": _history_series_shape(days, points),
+    }
 
 
 @router.get("/health")
@@ -292,7 +512,12 @@ def snapshot(provider: str = Query(default="auto", max_length=64)) -> dict[str, 
 
 @router.get("/history")
 def history(
-    days: int = Query(default=7, ge=1, le=365),
+    days: int = Query(default=7, ge=1, le=90),
     limit: int = Query(default=30, ge=1, le=200),
+    bucket_start: int | None = Query(default=None, ge=0),
 ) -> dict[str, Any]:
-    return {"ok": True, "history": _token_history(days, limit)}
+    try:
+        payload = _token_history(days, limit, bucket_start)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="invalid history bucket") from exc
+    return {"ok": True, "history": payload}

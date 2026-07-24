@@ -33,8 +33,18 @@
         output: "Sortie",
         cached: "Cache lu",
         total: "Tokens bruts",
+        chart: "Utilisation des tokens",
+        chartHint: "Créneaux UTC · clique sur une barre pour isoler les sessions correspondantes.",
+        inputLegend: "Entrée",
+        outputLegend: "Sortie",
+        reasoningLegend: "Raisonnement (dans la sortie)",
+        cacheReadLegend: "Cache lu",
+        cacheWriteLegend: "Cache écrit",
         recent: "Sessions récentes",
         recentHint: "30 dernières sessions de la période",
+        filteredHint: "Sessions du créneau sélectionné",
+        truncatedHint: "Résultats bornés : certaines sessions du créneau ne sont pas affichées.",
+        logRef: "Réf. logs",
         date: "Date",
         model: "Modèle · fournisseur",
         surface: "Surface",
@@ -64,8 +74,18 @@
       output: "Output",
       cached: "Cache read",
       total: "Raw tokens",
+      chart: "Token usage",
+      chartHint: "UTC buckets · select a bar to isolate the matching sessions.",
+      inputLegend: "Input",
+      outputLegend: "Output",
+      reasoningLegend: "Reasoning (within output)",
+      cacheReadLegend: "Cache read",
+      cacheWriteLegend: "Cache write",
       recent: "Recent sessions",
       recentHint: "Latest 30 sessions in the period",
+      filteredHint: "Sessions in the selected bucket",
+      truncatedHint: "Bounded results: some sessions in this bucket are not displayed.",
+      logRef: "Log ref",
       date: "Date",
       model: "Model · provider",
       surface: "Surface",
@@ -88,10 +108,21 @@
 
   function formatDate(value) {
     if (!value) return "—";
-    const date = new Date(value);
+    const numeric = Number(value);
+    const date = new Date(Number.isFinite(numeric) && Math.abs(numeric) < 100000000000 ? numeric * 1000 : value);
     return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat(undefined, {
       dateStyle: "short",
       timeStyle: "short"
+    }).format(date);
+  }
+
+  function formatBucket(value, bucket) {
+    const date = new Date(Number(value || 0) * 1000);
+    if (Number.isNaN(date.getTime())) return "—";
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "short",
+      timeStyle: bucket === "hour" ? "short" : undefined,
+      timeZone: "UTC"
     }).format(date);
   }
 
@@ -161,32 +192,152 @@
     );
   }
 
+  function UsageChart(props) {
+    const history = props.history || {};
+    const series = history.series || {};
+    const points = series.points || [];
+    const t = props.t;
+    const width = Math.max(720, points.length * 22 + 64);
+    const height = 220;
+    const baseline = 182;
+    const chartHeight = 142;
+    const step = (width - 64) / Math.max(1, points.length);
+    const barWidth = Math.max(4, Math.min(18, step * 0.68));
+    const maximum = Math.max(1, ...points.map(function (point) { return Number(point.total_tokens || 0); }));
+    const labelStep = Math.max(1, Math.ceil(points.length / 7));
+    const legends = [
+      ["input", t.inputLegend],
+      ["output", t.outputLegend],
+      ["reasoning", t.reasoningLegend],
+      ["cache-read", t.cacheReadLegend],
+      ["cache-write", t.cacheWriteLegend]
+    ];
+
+    return h("section", { className: "aum-card aum-chart-card" },
+      h("div", { className: "aum-chart-head" },
+        h("div", null,
+          h("h2", { className: "aum-card-title" }, t.chart),
+          h("p", { className: "aum-card-meta" }, t.chartHint)
+        ),
+        h("div", { className: "aum-periods", "aria-label": t.chart }, [1, 7, 30, 90].map(function (days) {
+          return h("button", {
+            type: "button",
+            className: "aum-period" + (props.days === days ? " is-active" : ""),
+            onClick: function () { props.onDays(days); },
+            key: days
+          }, days === 1 ? "24h" : days + "d");
+        }))
+      ),
+      points.length ? h("div", { className: "aum-chart-scroll" },
+        h("svg", {
+          className: "aum-chart",
+          viewBox: "0 0 " + width + " " + height,
+          style: { width: width + "px" },
+          role: "img",
+          "aria-label": t.chart
+        },
+          h("line", { className: "aum-chart-axis", x1: 32, y1: baseline, x2: width - 24, y2: baseline }),
+          points.map(function (point, index) {
+            const reasoning = Math.min(Number(point.reasoning_tokens || 0), Number(point.output_tokens || 0));
+            const segments = [
+              ["input", Number(point.input_tokens || 0)],
+              ["cache-read", Number(point.cache_read_tokens || 0)],
+              ["cache-write", Number(point.cache_write_tokens || 0)],
+              ["output", Math.max(0, Number(point.output_tokens || 0) - reasoning)],
+              ["reasoning", reasoning]
+            ];
+            const x = 32 + index * step + (step - barWidth) / 2;
+            let y = baseline;
+            const rectangles = segments.map(function (segment) {
+              const segmentHeight = Math.max(0, segment[1] / maximum * chartHeight);
+              y -= segmentHeight;
+              return h("rect", {
+                className: "aum-chart-segment aum-chart-" + segment[0],
+                x: x,
+                y: y,
+                width: barWidth,
+                height: segmentHeight,
+                key: segment[0]
+              });
+            });
+            const label = formatBucket(point.bucket_start, series.bucket);
+            const tooltip = label + " · " + compact(point.total_tokens) + " " + t.tokens
+              + " · " + compact(point.sessions) + " " + t.sessions;
+            const selected = props.selectedBucket === Number(point.bucket_start);
+            return h("g", {
+              className: "aum-chart-bar" + (selected ? " is-selected" : ""),
+              role: "button",
+              tabIndex: 0,
+              "aria-label": tooltip,
+              onClick: function () { props.onSelect(Number(point.bucket_start)); },
+              onKeyDown: function (event) {
+                if (event.key === "Enter" || event.key === " ") props.onSelect(Number(point.bucket_start));
+              },
+              key: point.bucket_start
+            },
+              h("title", null, tooltip),
+              rectangles,
+              index % labelStep === 0 || index === points.length - 1
+                ? h("text", { className: "aum-chart-label", x: x + barWidth / 2, y: baseline + 22, textAnchor: "middle" }, label)
+                : null
+            );
+          })
+        )
+      ) : h("div", { className: "aum-empty" }, t.empty),
+      h("div", { className: "aum-chart-legend" }, legends.map(function (legend) {
+        return h("span", { key: legend[0] },
+          h("i", { className: "aum-legend-swatch aum-chart-" + legend[0] }),
+          legend[1]
+        );
+      }))
+    );
+  }
+
   function HistoryTable(props) {
-    const rows = props.history && props.history.rows || [];
+    const history = props.history || {};
+    const rows = history.rows || [];
+    const series = history.series || {};
+    const bucketSeconds = Number(series.bucket_seconds || 86400);
+    const visibleRows = props.selectedBucket === null
+      ? rows.slice(0, 30)
+      : rows.filter(function (row) {
+        const eventTime = Number(row.ended_at || row.started_at || 0);
+        return Math.floor(eventTime / bucketSeconds) * bucketSeconds === props.selectedBucket;
+      });
     const t = props.t;
     return h("section", { className: "aum-card aum-table-card" },
       h("div", { className: "aum-table-head" },
         h("div", null,
           h("h2", { className: "aum-card-title" }, t.recent),
-          h("p", { className: "aum-card-meta" }, t.recentHint)
+          h("p", { className: "aum-card-meta" }, props.selectedBucket === null ? t.recentHint : t.filteredHint),
+          props.selectedBucket !== null && history.rows_truncated
+            ? h("p", { className: "aum-warning" }, t.truncatedHint)
+            : null
         )
       ),
-      rows.length ? h("div", { className: "aum-table-wrap" },
+      visibleRows.length ? h("div", { className: "aum-table-wrap" },
         h("table", { className: "aum-table" },
           h("thead", null, h("tr", null,
             h("th", null, t.date),
             h("th", null, t.model),
             h("th", null, t.surface),
+            h("th", null, t.logRef),
             h("th", { className: "aum-num" }, t.calls),
             h("th", { className: "aum-num" }, t.tokens)
           )),
-          h("tbody", null, rows.map(function (row, index) {
-            return h("tr", { key: (row.ended_at || row.started_at || "session") + "-" + index },
+          h("tbody", null, visibleRows.map(function (row, index) {
+            const tokenDetail = t.inputLegend + " " + compact(row.input_tokens)
+              + " · " + t.outputLegend + " " + compact(row.output_tokens)
+              + " · " + t.cacheReadLegend + " " + compact(row.cache_read_tokens)
+              + " · " + t.cacheWriteLegend + " " + compact(row.cache_write_tokens)
+              + (row.reasoning_tokens ? " · " + t.reasoningLegend + " " + compact(row.reasoning_tokens) : "");
+            return h("tr", { key: row.session_ref || (row.ended_at || row.started_at || "session") + "-" + index },
               h("td", null, formatDate(row.ended_at || row.started_at)),
               h("td", { className: "aum-model" }, (row.model || "unknown") + " · " + (row.provider || "unknown")),
               h("td", { className: "aum-muted" }, row.source || "unknown"),
+              h("td", null, row.session_ref ? h("code", { className: "aum-session-ref", title: t.logRef }, row.session_ref) : "—"),
               h("td", { className: "aum-num" }, compact(row.api_call_count)),
-              h("td", { className: "aum-num" }, compact(row.total_tokens))
+              h("td", { className: "aum-num", title: tokenDetail }, compact(row.total_tokens))
             );
           }))
         )
@@ -199,10 +350,17 @@
     const state = React.useState({ loading: true, refreshing: false, error: false, account: null, history: null });
     const data = state[0];
     const setData = state[1];
+    const periodState = React.useState(7);
+    const days = periodState[0];
+    const setDays = periodState[1];
+    const selectionState = React.useState(null);
+    const selectedBucket = selectionState[0];
+    const setSelectedBucket = selectionState[1];
 
     const load = React.useCallback(function (manual) {
       setData(function (previous) { return Object.assign({}, previous, { refreshing: !!manual, error: false }); });
-      return Promise.all([api("/snapshot?provider=auto"), api("/history?days=7&limit=30")])
+      const bucketQuery = selectedBucket === null ? "" : "&bucket_start=" + encodeURIComponent(String(selectedBucket));
+      return Promise.all([api("/snapshot?provider=auto"), api("/history?days=" + days + "&limit=200" + bucketQuery)])
         .then(function (responses) {
           setData({
             loading: false,
@@ -215,7 +373,7 @@
         .catch(function () {
           setData(function (previous) { return Object.assign({}, previous, { loading: false, refreshing: false, error: true }); });
         });
-    }, []);
+    }, [days, selectedBucket]);
 
     React.useEffect(function () {
       load(false);
@@ -250,7 +408,20 @@
         h(AccountCard, { account: data.account, t: t }),
         h(StatsCard, { history: data.history, t: t })
       ),
-      h(HistoryTable, { history: data.history, t: t }),
+      h(UsageChart, {
+        history: data.history,
+        t: t,
+        days: days,
+        selectedBucket: selectedBucket,
+        onDays: function (value) {
+          setSelectedBucket(null);
+          setDays(value);
+        },
+        onSelect: function (value) {
+          setSelectedBucket(function (current) { return current === value ? null : value; });
+        }
+      }),
+      h(HistoryTable, { history: data.history, t: t, selectedBucket: selectedBucket }),
       h("p", { className: "aum-source-note" }, t.source)
     );
   }

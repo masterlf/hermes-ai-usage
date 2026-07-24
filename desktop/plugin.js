@@ -10,6 +10,7 @@ import {
   useQuery,
   useValue
 } from '@hermes/plugin-sdk'
+import { useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'ai-usage-monitor'
@@ -31,11 +32,29 @@ function compactNumber(value) {
 
 function formatDate(value) {
   if (!value) return '—'
-  const date = new Date(value)
+  const numeric = Number(value)
+  const date = new Date(Number.isFinite(numeric) && Math.abs(numeric) < 100_000_000_000 ? numeric * 1000 : value)
   return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat(undefined, {
     dateStyle: 'short',
     timeStyle: 'short'
   }).format(date)
+}
+
+function formatBucket(value, bucket) {
+  const date = new Date(Number(value || 0) * 1000)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'short',
+    timeStyle: bucket === 'hour' ? 'short' : undefined,
+    timeZone: 'UTC'
+  }).format(date)
+}
+
+function sessionReference(value) {
+  const sessionId = String(value || '')
+  if (sessionId.length < 16) return '—'
+  const reference = sessionId.slice(-12)
+  return /^[A-Za-z0-9._-]{12}$/.test(reference) ? reference : '—'
 }
 
 function bindingWindow(account) {
@@ -67,11 +86,12 @@ function useSessionUsage() {
   return { sessionId, ...query }
 }
 
-function useHistory() {
+function useHistory(days, selectedBucket) {
   const profile = useValue(host.state.profile)
+  const bucketQuery = selectedBucket === null ? '' : `&bucket_start=${encodeURIComponent(String(selectedBucket))}`
   return useQuery({
-    queryKey: [ID, 'history', profile, 7],
-    queryFn: () => pluginRest('/history?days=7&limit=30', { timeoutMs: 10_000 }),
+    queryKey: [ID, 'history', profile, days, selectedBucket],
+    queryFn: () => pluginRest(`/history?days=${days}&limit=200${bucketQuery}`, { timeoutMs: 10_000 }),
     refetchInterval: 30_000,
     retry: 1
   })
@@ -204,7 +224,7 @@ function SessionCard({ usage, sessionId }) {
       jsx('h2', { className: 'font-medium', children: t('sessionTitle') }),
       jsx('p', {
         className: 'text-xs text-(--ui-text-quaternary)',
-        children: sessionId || t('noActiveSession')
+        children: sessionId ? sessionReference(sessionId) : t('noActiveSession')
       }),
       jsx('div', {
         className: 'mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm',
@@ -217,10 +237,147 @@ function SessionCard({ usage, sessionId }) {
   })
 }
 
-function HistoryCard({ history }) {
+function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
+  const t = usePluginI18n(ID)
+  const points = history?.series?.points || []
+  const width = Math.max(720, points.length * 22 + 64)
+  const baseline = 182
+  const chartHeight = 142
+  const step = (width - 64) / Math.max(1, points.length)
+  const barWidth = Math.max(4, Math.min(18, step * 0.68))
+  const maximum = Math.max(1, ...points.map(point => Number(point.total_tokens || 0)))
+  const labelStep = Math.max(1, Math.ceil(points.length / 7))
+  const colors = {
+    input: 'var(--ui-accent)',
+    output: 'var(--ui-text-secondary)',
+    reasoning: 'var(--ui-accent)',
+    cacheRead: 'var(--ui-text-tertiary)',
+    cacheWrite: 'var(--ui-text-quaternary)'
+  }
+  const legend = [
+    ['input', t('input')],
+    ['output', t('output')],
+    ['reasoning', t('reasoningSubset')],
+    ['cacheRead', t('cacheRead')],
+    ['cacheWrite', t('cacheWrite')]
+  ]
+
+  return jsxs('section', {
+    className: 'rounded-md border border-(--ui-stroke-secondary)',
+    children: [
+      jsxs('div', {
+        className: 'flex items-end justify-between gap-3 border-b border-(--ui-stroke-secondary) p-3',
+        children: [
+          jsxs('div', {
+            children: [
+              jsx('h2', { className: 'font-medium', children: t('usageChart') }),
+              jsx('p', { className: 'text-xs text-(--ui-text-tertiary)', children: t('chartHint') })
+            ]
+          }),
+          jsx('div', {
+            className: 'flex gap-1',
+            children: [1, 7, 30, 90].map(period => jsx('button', {
+              type: 'button',
+              className: [
+                'rounded border px-2 py-1 text-xs',
+                period === days
+                  ? 'border-(--ui-accent) text-foreground'
+                  : 'border-(--ui-stroke-secondary) text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover)'
+              ].join(' '),
+              onClick: () => onDays(period),
+              children: period === 1 ? '24h' : `${period}d`
+            }, period))
+          })
+        ]
+      }),
+      points.length ? jsx('div', {
+        className: 'overflow-x-auto px-2 pt-1',
+        children: jsxs('svg', {
+          viewBox: `0 0 ${width} 220`,
+          className: 'block h-[220px] max-w-none',
+          style: { width: `${width}px` },
+          role: 'img',
+          'aria-label': t('usageChart'),
+          children: [
+            jsx('line', { x1: 32, y1: baseline, x2: width - 24, y2: baseline, stroke: 'var(--ui-stroke-secondary)' }),
+            ...points.map((point, index) => {
+              const reasoning = Math.min(Number(point.reasoning_tokens || 0), Number(point.output_tokens || 0))
+              const segments = [
+                ['input', Number(point.input_tokens || 0), 1],
+                ['cacheRead', Number(point.cache_read_tokens || 0), 1],
+                ['cacheWrite', Number(point.cache_write_tokens || 0), 1],
+                ['output', Math.max(0, Number(point.output_tokens || 0) - reasoning), 1],
+                ['reasoning', reasoning, 0.58]
+              ]
+              const x = 32 + index * step + (step - barWidth) / 2
+              let y = baseline
+              const rectangles = segments.map(([name, value, opacity]) => {
+                const segmentHeight = Math.max(0, value / maximum * chartHeight)
+                y -= segmentHeight
+                return jsx('rect', {
+                  x,
+                  y,
+                  width: barWidth,
+                  height: segmentHeight,
+                  fill: colors[name],
+                  opacity,
+                  stroke: selectedBucket === Number(point.bucket_start) ? 'var(--ui-accent)' : 'none',
+                  strokeWidth: 1.5
+                }, name)
+              })
+              const label = formatBucket(point.bucket_start, history?.series?.bucket)
+              const tooltip = `${label} · ${compactNumber(point.total_tokens)} ${t('tokens')} · ${compactNumber(point.sessions)} ${t('sessions')}`
+              return jsxs('g', {
+                role: 'button',
+                tabIndex: 0,
+                className: 'cursor-pointer opacity-80 hover:opacity-100 focus:opacity-100',
+                'aria-label': tooltip,
+                onClick: () => onSelect(Number(point.bucket_start)),
+                onKeyDown: event => {
+                  if (event.key === 'Enter' || event.key === ' ') onSelect(Number(point.bucket_start))
+                },
+                children: [
+                  jsx('title', { children: tooltip }),
+                  ...rectangles,
+                  index % labelStep === 0 || index === points.length - 1 ? jsx('text', {
+                    x: x + barWidth / 2,
+                    y: baseline + 22,
+                    textAnchor: 'middle',
+                    fill: 'var(--ui-text-quaternary)',
+                    fontSize: 9,
+                    children: label
+                  }) : null
+                ]
+              }, point.bucket_start)
+            })
+          ]
+        })
+      }) : jsx('p', { className: 'p-3 text-sm text-(--ui-text-tertiary)', children: t('noHistory') }),
+      jsx('div', {
+        className: 'flex flex-wrap gap-x-4 gap-y-2 border-t border-(--ui-stroke-secondary) p-3 text-xs text-(--ui-text-tertiary)',
+        children: legend.map(([name, label]) => jsxs('span', {
+          className: 'inline-flex items-center gap-1.5',
+          children: [
+            jsx('i', { className: 'inline-block size-2.5', style: { backgroundColor: colors[name], opacity: name === 'reasoning' ? 0.58 : 1 } }),
+            label
+          ]
+        }, name))
+      })
+    ]
+  })
+}
+
+function HistoryCard({ history, selectedBucket }) {
   const t = usePluginI18n(ID)
   const rows = history?.rows || []
   const totals = history?.totals || {}
+  const bucketSeconds = Number(history?.series?.bucket_seconds || 86400)
+  const visibleRows = selectedBucket === null
+    ? rows.slice(0, 30)
+    : rows.filter(row => {
+        const eventTime = Number(row.ended_at || row.started_at || 0)
+        return Math.floor(eventTime / bucketSeconds) * bucketSeconds === selectedBucket
+      })
   return jsxs('section', {
     className: 'rounded-md border border-(--ui-stroke-secondary) p-3',
     children: [
@@ -230,7 +387,14 @@ function HistoryCard({ history }) {
           jsxs('div', {
             children: [
               jsx('h2', { className: 'font-medium', children: t('historyTitle') }),
-              jsx('p', { className: 'text-xs text-(--ui-text-tertiary)', children: t('historySubtitle') })
+              jsx('p', {
+                className: 'text-xs text-(--ui-text-tertiary)',
+                children: selectedBucket === null ? t('historySubtitle') : t('filteredHistory')
+              }),
+              selectedBucket !== null && history?.rows_truncated ? jsx('p', {
+                className: 'mt-1 text-xs text-(--ui-accent)',
+                children: t('truncatedHistory')
+              }) : null
             ]
           }),
           jsx('span', {
@@ -239,25 +403,30 @@ function HistoryCard({ history }) {
           })
         ]
       }),
-      rows.length ? jsx('div', {
+      visibleRows.length ? jsx('div', {
         className: 'mt-3 overflow-auto',
         children: jsxs('div', {
-          className: 'min-w-[680px] text-xs',
+          className: 'min-w-[800px] text-xs',
           children: [
             jsxs('div', {
-              className: 'grid grid-cols-[150px_1fr_110px_90px_90px] gap-2 border-b border-(--ui-stroke-secondary) pb-2 text-(--ui-text-tertiary)',
-              children: [t('when'), t('modelProvider'), t('source'), t('calls'), t('tokens')].map(label => jsx('span', { children: label, key: label }))
+              className: 'grid grid-cols-[140px_1fr_90px_120px_70px_80px] gap-2 border-b border-(--ui-stroke-secondary) pb-2 text-(--ui-text-tertiary)',
+              children: [t('when'), t('modelProvider'), t('source'), t('logsRef'), t('calls'), t('tokens')].map(label => jsx('span', { children: label, key: label }))
             }),
-            ...rows.map((row, index) => jsxs('div', {
-              className: 'grid grid-cols-[150px_1fr_110px_90px_90px] gap-2 border-b border-(--ui-stroke-secondary) py-2 last:border-0',
+            ...visibleRows.map((row, index) => jsxs('div', {
+              className: 'grid grid-cols-[140px_1fr_90px_120px_70px_80px] gap-2 border-b border-(--ui-stroke-secondary) py-2 last:border-0',
               children: [
                 jsx('span', { children: formatDate(row.ended_at || row.started_at) }),
                 jsx('span', { className: 'truncate', children: `${row.model || 'unknown'} · ${row.provider || 'unknown'}` }),
                 jsx('span', { className: 'truncate text-(--ui-text-tertiary)', children: row.source || 'unknown' }),
+                jsx('code', { className: 'select-all text-(--ui-text-secondary)', children: row.session_ref || '—' }),
                 jsx('span', { className: 'text-right tabular-nums', children: compactNumber(row.api_call_count) }),
-                jsx('span', { className: 'text-right tabular-nums', children: compactNumber(row.total_tokens) })
+                jsx('span', {
+                  className: 'text-right tabular-nums',
+                  title: `${t('input')} ${compactNumber(row.input_tokens)} · ${t('output')} ${compactNumber(row.output_tokens)} · ${t('cacheRead')} ${compactNumber(row.cache_read_tokens)} · ${t('cacheWrite')} ${compactNumber(row.cache_write_tokens)}`,
+                  children: compactNumber(row.total_tokens)
+                })
               ],
-              key: `${row.ended_at || row.started_at || 'session'}-${index}`
+              key: row.session_ref || `${row.ended_at || row.started_at || 'session'}-${index}`
             }))
           ]
         })
@@ -268,9 +437,11 @@ function HistoryCard({ history }) {
 
 function UsagePage() {
   const t = usePluginI18n(ID)
+  const [days, setDays] = useState(7)
+  const [selectedBucket, setSelectedBucket] = useState(null)
   const accountQuery = useAccountSnapshot()
   const sessionQuery = useSessionUsage()
-  const historyQuery = useHistory()
+  const historyQuery = useHistory(days, selectedBucket)
   const refreshing = accountQuery.isFetching || sessionQuery.isFetching || historyQuery.isFetching
 
   return jsxs('main', {
@@ -309,7 +480,20 @@ function UsagePage() {
       }),
       jsx('div', {
         className: 'mt-4',
-        children: jsx(HistoryCard, { history: historyQuery.data?.history })
+        children: jsx(UsageChart, {
+          history: historyQuery.data?.history,
+          days,
+          selectedBucket,
+          onDays: value => {
+            setSelectedBucket(null)
+            setDays(value)
+          },
+          onSelect: value => setSelectedBucket(current => current === value ? null : value)
+        })
+      }),
+      jsx('div', {
+        className: 'mt-4',
+        children: jsx(HistoryCard, { history: historyQuery.data?.history, selectedBucket })
       }),
       jsx('p', {
         className: 'mt-4 text-xs text-(--ui-text-quaternary)',
@@ -327,11 +511,16 @@ export default {
     ctx.i18n.register({
       en: {
         title: 'AI usage',
-        subtitle: 'Provider quota, active-session tokens, and seven-day Hermes history.',
+        subtitle: 'Provider quota, active-session tokens, and local Hermes history.',
         accountTitle: 'Account quota',
         sessionTitle: 'Active session',
         historyTitle: 'Recent usage',
         historySubtitle: 'Session-level history; no prompt content is read or displayed.',
+        filteredHistory: 'Sessions in the selected chart bucket.',
+        truncatedHistory: 'Bounded results: some sessions in this bucket are not displayed.',
+        usageChart: 'Token usage',
+        chartHint: 'UTC buckets · select a bar to isolate its sessions below.',
+        logsRef: 'Log ref',
         quotaUnavailable: 'Account quota is unavailable for this provider.',
         codexCaveat: 'This is the Codex allowance attached to your ChatGPT subscription, not a universal percentage for ordinary ChatGPT conversations.',
         remaining: value => `${value}% remaining`,
@@ -339,6 +528,9 @@ export default {
         input: 'Input tokens',
         output: 'Output tokens',
         reasoning: 'Reasoning tokens',
+        reasoningSubset: 'Reasoning (within output)',
+        cacheRead: 'Cache read',
+        cacheWrite: 'Cache write',
         apiCalls: 'API calls',
         context: 'Current context',
         noActiveSession: 'No active session',
@@ -347,6 +539,7 @@ export default {
         modelProvider: 'Model · provider',
         source: 'Surface',
         calls: 'Calls',
+        sessions: 'sessions',
         tokens: 'Tokens',
         refresh: 'Refresh',
         refreshing: 'Refreshing…',
@@ -357,11 +550,16 @@ export default {
       },
       fr: {
         title: 'Consommation IA',
-        subtitle: 'Quota fournisseur, tokens de la session active et historique Hermes sur sept jours.',
+        subtitle: 'Quota fournisseur, tokens de la session active et historique local Hermes.',
         accountTitle: 'Quota du compte',
         sessionTitle: 'Session active',
         historyTitle: 'Consommation récente',
         historySubtitle: 'Historique par session ; aucun contenu de prompt n’est lu ni affiché.',
+        filteredHistory: 'Sessions du créneau sélectionné dans le graphique.',
+        truncatedHistory: 'Résultats bornés : certaines sessions du créneau ne sont pas affichées.',
+        usageChart: 'Utilisation des tokens',
+        chartHint: 'Créneaux UTC · sélectionne une barre pour isoler ses sessions ci-dessous.',
+        logsRef: 'Réf. logs',
         quotaUnavailable: 'Le quota du compte n’est pas disponible pour ce fournisseur.',
         codexCaveat: 'Il s’agit du quota Codex rattaché à ton abonnement ChatGPT, pas d’un pourcentage universel pour les conversations ChatGPT ordinaires.',
         remaining: value => `${value} % restants`,
@@ -369,6 +567,9 @@ export default {
         input: 'Tokens en entrée',
         output: 'Tokens en sortie',
         reasoning: 'Tokens de raisonnement',
+        reasoningSubset: 'Raisonnement (dans la sortie)',
+        cacheRead: 'Cache lu',
+        cacheWrite: 'Cache écrit',
         apiCalls: 'Appels API',
         context: 'Contexte actuel',
         noActiveSession: 'Aucune session active',
@@ -377,6 +578,7 @@ export default {
         modelProvider: 'Modèle · fournisseur',
         source: 'Surface',
         calls: 'Appels',
+        sessions: 'sessions',
         tokens: 'Tokens',
         refresh: 'Actualiser',
         refreshing: 'Actualisation…',

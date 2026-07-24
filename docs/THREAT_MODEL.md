@@ -27,6 +27,7 @@
 5. Do not present local estimates as official remote quota.
 6. Do not introduce browser code-execution or data-exfiltration sinks.
 7. Keep build and automation permissions minimal and reproducible.
+8. Minimise session correlation data while retaining useful local diagnostics.
 
 ## Controls
 
@@ -40,6 +41,7 @@
 | XSS / DOM injection | React text rendering; bounded strings; prohibited raw-HTML/eval sinks |
 | Browser credential leakage | host SDK clients only; no custom Authorization/cookies/storage/direct fetch |
 | Query DoS | bounded `days` and `limit`; short SQLite timeout; provider cache |
+| Session correlation leakage | complete IDs removed before serialization; bounded collision-aware suffix; authenticated host surfaces only |
 | Supply-chain compromise | no runtime dependencies; hashed dev lock; pinned Actions; Dependabot; review gates |
 | Secret committed to Git | local and CI Gitleaks; GitHub secret scanning and push protection |
 
@@ -56,6 +58,8 @@
 - Provider APIs can change semantics without notice; values remain labelled by source.
 - Session/model/surface metadata can itself be sensitive in some organisations. Access
   should be limited to trusted Dashboard users.
+- Short session references remain searchable identifiers while source logs are retained;
+  they are minimised but not anonymous.
 - An authenticated user can issue repeated bounded history requests; host-level rate
   limiting and resource controls remain upstream concerns.
 - A compromised Hermes core process has privileges beyond this plugin's controls.

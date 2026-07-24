@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sqlite3
 import sys
 import tempfile
@@ -160,14 +161,14 @@ class HistoryTests(unittest.TestCase):
             db = sqlite3.connect(home / "state.db")
             db.execute(
                 """INSERT INTO sessions VALUES (
-                    's1', 'desktop', 'gpt-test', 'openai-codex',
+                    '20260724_120000_abcd12345678', 'desktop', 'gpt-test', 'openai-codex',
                     strftime('%s','now'), strftime('%s','now'),
                     100, 20, 300, 5, 10, 4, NULL, 0.12, 'estimated'
                 )"""
             )
             db.execute(
                 """INSERT INTO sessions VALUES (
-                    's2', 'desktop', 'gpt-test', 'openai-codex',
+                    '20260724_120100_wxyz87654321', 'desktop', 'gpt-test', 'openai-codex',
                     strftime('%s','now'), strftime('%s','now'),
                     10, 0, 0, 0, 0, 1, NULL, 0.0, 'estimated'
                 )"""
@@ -183,10 +184,140 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(payload["totals"]["sessions"], 2)
         self.assertEqual(payload["totals"]["total_tokens"], 435)
         self.assertEqual(payload["rows"][0]["provider"], "openai-codex")
+        self.assertIn(payload["rows"][0]["session_ref"], {"abcd12345678", "wxyz87654321"})
         self.assertNotIn("id", payload["rows"][0])
         self.assertNotIn("cost_usd", payload["rows"][0])
         self.assertNotIn("content", payload["rows"][0])
         self.assertNotIn("prompt", payload["rows"][0])
+        serialized = json.dumps(payload)
+        self.assertNotIn("20260724_120000_abcd12345678", serialized)
+        self.assertNotIn("20260724_120100_wxyz87654321", serialized)
+        self.assertEqual(payload["series"]["bucket"], "day")
+        self.assertEqual(payload["series"]["timezone"], "UTC")
+        self.assertGreaterEqual(len(payload["series"]["points"]), 7)
+        self.assertTrue(any(point["total_tokens"] == 0 for point in payload["series"]["points"]))
+        point = next(point for point in payload["series"]["points"] if point["total_tokens"])
+        self.assertEqual(point["input_tokens"], 110)
+        self.assertEqual(point["output_tokens"], 20)
+        self.assertEqual(point["reasoning_tokens"], 10)
+        self.assertEqual(point["total_tokens"], 435)
+
+    def test_one_day_history_uses_hourly_buckets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._create_state_db(home)
+            database = sqlite3.connect(home / "state.db")
+            database.execute(
+                """INSERT INTO sessions VALUES (
+                    '20260724_120000_hour12345678', 'desktop', 'gpt-test', 'openai-codex',
+                    strftime('%s','now'), strftime('%s','now'),
+                    10, 5, 0, 0, 1, 1, NULL, 0.0, 'estimated'
+                )"""
+            )
+            database.commit()
+            database.close()
+
+            with mock.patch.object(module, "get_hermes_home", lambda: home):
+                payload = module._token_history(1, 30)
+
+        self.assertEqual(payload["series"]["bucket"], "hour")
+        self.assertEqual(payload["series"]["bucket_seconds"], 3600)
+
+    def test_session_references_extend_on_suffix_collision_without_exposing_full_id(self):
+        alpha = "20260724_120000_alpha_same12345678"
+        bravo = "cron_job_bravo_same12345678"
+        unique = "20260724_120100_unique87654321"
+
+        references = module._session_references([alpha, bravo, unique])
+
+        self.assertEqual(references[unique], "ique87654321")
+        self.assertEqual(len(references[alpha]), 16)
+        self.assertEqual(len(references[bravo]), 16)
+        self.assertNotEqual(references[alpha], references[bravo])
+        self.assertNotEqual(references[alpha], alpha)
+        self.assertNotEqual(references[bravo], bravo)
+
+        unsafe = "20260724_120200_bad\u202eref12345678"
+        self.assertNotIn(unsafe, module._session_references([unsafe]))
+
+        complete_twelve_character_id = "abcdefghijkl"
+        self.assertNotIn(
+            complete_twelve_character_id,
+            module._session_references([complete_twelve_character_id]),
+        )
+
+        nearly_complete_thirteen_character_id = "a123456789012"
+        self.assertNotIn(
+            nearly_complete_thirteen_character_id,
+            module._session_references([nearly_complete_thirteen_character_id]),
+        )
+
+        outside_page_collision = "new_AAAAsame12345678"
+        references = module._session_references(
+            [outside_page_collision],
+            {12: {"same12345678"}},
+        )
+        self.assertEqual(len(references[outside_page_collision]), 16)
+
+    def test_history_extends_reference_for_collision_outside_returned_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._create_state_db(home)
+            database = sqlite3.connect(home / "state.db")
+            database.executemany(
+                """INSERT INTO sessions VALUES (
+                    ?, 'desktop', 'gpt-test', 'openai-codex',
+                    strftime('%s','now') + ?, strftime('%s','now') + ?,
+                    10, 5, 0, 0, 1, 1, NULL, 0.0, 'estimated'
+                )""",
+                [
+                    ("older_AAAAsame12345678", -10, -10),
+                    ("newer_BBBBsame12345678", 0, 0),
+                ],
+            )
+            database.commit()
+            database.close()
+
+            with mock.patch.object(module, "get_hermes_home", lambda: home):
+                payload = module._token_history(7, 1)
+
+        self.assertEqual(len(payload["rows"]), 1)
+        self.assertEqual(len(payload["rows"][0]["session_ref"]), 16)
+        self.assertNotEqual(payload["rows"][0]["session_ref"], "same12345678")
+
+    def test_history_uses_end_time_excludes_future_and_reports_truncation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._create_state_db(home)
+            database = sqlite3.connect(home / "state.db")
+            database.executemany(
+                """INSERT INTO sessions VALUES (
+                    ?, 'desktop', 'gpt-test', 'openai-codex', ?, ?,
+                    ?, 0, 0, 0, 1, 1, NULL, 0.0, 'estimated'
+                )""",
+                [
+                    ("long_session_alpha12345678", -90000, 1000, 10),
+                    ("normal_session_bravo12345678", 900, 1000, 20),
+                    ("normal_session_charlie12345678", 950, 1000, 30),
+                    ("future_session_delta12345678", 3000, 3000, 40),
+                ],
+            )
+            database.commit()
+            database.close()
+
+            with (
+                mock.patch.object(module, "get_hermes_home", lambda: home),
+                mock.patch.object(module.time, "time", return_value=2000),
+            ):
+                payload = module._token_history(1, 2, 0)
+
+        self.assertEqual(payload["totals"]["sessions"], 3)
+        self.assertEqual(payload["totals"]["total_tokens"], 60)
+        self.assertEqual(sum(point["total_tokens"] for point in payload["series"]["points"]), 60)
+        self.assertEqual(payload["row_count"], 3)
+        self.assertTrue(payload["rows_truncated"])
+        self.assertEqual(payload["selected_bucket_start"], 0)
+        self.assertEqual(len(payload["rows"]), 2)
 
     def test_history_error_does_not_reflect_database_details(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -231,6 +362,16 @@ class RouteTests(unittest.TestCase):
             client.get("/api/plugins/ai-usage-monitor/history?days=7&limit=201").status_code,
             422,
         )
+        self.assertEqual(
+            client.get("/api/plugins/ai-usage-monitor/history?days=91&limit=30").status_code,
+            422,
+        )
+        self.assertEqual(
+            client.get(
+                "/api/plugins/ai-usage-monitor/history?days=1&limit=30&bucket_start=1"
+            ).status_code,
+            422,
+        )
 
     def test_success_paths_through_mounted_router(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -239,7 +380,7 @@ class RouteTests(unittest.TestCase):
             database = sqlite3.connect(home / "state.db")
             database.execute(
                 """INSERT INTO sessions VALUES (
-                    'route-test', 'desktop', 'gpt-test', 'openai-codex',
+                    '20260724_120000_route12345678', 'desktop', 'gpt-test', 'openai-codex',
                     strftime('%s','now'), strftime('%s','now'),
                     10, 5, 0, 0, 1, 1, NULL, 0.0, 'estimated'
                 )"""
@@ -267,6 +408,11 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(history_response.status_code, 200)
         self.assertTrue(history_response.json()["history"]["available"])
         self.assertEqual(history_response.json()["history"]["rows"][0]["model"], "gpt-test")
+        self.assertEqual(
+            history_response.json()["history"]["rows"][0]["session_ref"],
+            "oute12345678",
+        )
+        self.assertGreaterEqual(len(history_response.json()["history"]["series"]["points"]), 7)
         module._account_cache.clear()
 
 
