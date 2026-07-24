@@ -23,7 +23,9 @@ It never reads prompt or message content.
 - Desktop status-bar indicator and detailed page;
 - Web Dashboard tab at `/ai-usage`;
 - active-session token and context counters in Hermes Desktop;
-- seven-day read-only history with provider, model, surface, calls, and token categories;
+- selectable 24-hour, 7-day, 30-day, and 90-day token chart with hourly/daily buckets;
+- session history with provider, model, surface, calls, token categories, and a short
+  reference that can be searched in retained Hermes logs;
 - French and English UI;
 - no independent credential handling, browser storage, analytics, or third-party scripts.
 
@@ -47,7 +49,8 @@ Key controls:
 - SQLite URI `mode=ro` plus `PRAGMA query_only=ON`;
 - static parameterized SQL; no mutation statements;
 - response allowlisting and bounded display strings;
-- no session identifiers, prompt content, messages, tool payloads, or raw exception text;
+- no complete session identifiers, prompt content, messages, tool payloads, or raw
+  exception text; only bounded log-searchable session suffixes are returned;
 - no `innerHTML`, `eval`, browser storage, custom auth headers, or direct browser `fetch`;
 - CI with locked development dependencies, Ruff, Bandit, pip-audit, CodeQL,
   Gitleaks, dependency review, zizmor, and OpenSSF Scorecard;
@@ -111,10 +114,15 @@ Hermes mounts the router under `/api/plugins/ai-usage-monitor`:
 
 - `GET /health`
 - `GET /snapshot?provider=auto`
-- `GET /history?days=7&limit=30`
+- `GET /history?days=7&limit=200&bucket_start=<UTC epoch>` (`days` is bounded to
+  1–90; `bucket_start` is optional and must match a returned UTC bucket)
 
 Hermes Dashboard authentication protects these routes. The plugin does not create
-another auth mechanism and should not be exposed independently.
+another auth mechanism and should not be exposed independently. `session_ref` is a
+12-character suffix (extended on collisions), not the complete session ID; it can be
+searched in local Hermes logs only while the corresponding logs are retained.
+Bucket-specific results remain capped at 200 rows and expose `row_count` plus
+`rows_truncated` so the UI never implies that a partial list is complete.
 
 ## Roadmap
 

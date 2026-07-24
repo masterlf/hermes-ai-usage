@@ -1,6 +1,7 @@
 # Development and CI dependencies only. The plugin adds no runtime dependencies to Hermes.
 bandit[toml]
 fastapi
+# Starlette 1.3+ TestClient's documented client, maintained by the Pydantic organisation.
 httpx2
 pip-audit
 ruff

@@ -1,6 +1,12 @@
 # Roadmap
 
-## 0.3 — defensible per-turn attribution
+## Delivered in 0.3 — session-level observability
+
+- Hourly/daily token chart with selectable 24-hour to 90-day periods.
+- Session-level token breakdown and short references searchable in retained local logs.
+- No prompt/message/tool content and no complete session identifier in API responses.
+
+## 0.4 — defensible per-turn attribution
 
 - Correlate provider calls to Hermes turn and session identifiers internally.
 - Persist usage metadata only, with configurable retention.
