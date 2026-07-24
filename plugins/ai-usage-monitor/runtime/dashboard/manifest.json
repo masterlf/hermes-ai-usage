@@ -1,0 +1,11 @@
+{
+  "name": "ai-usage-monitor",
+  "label": "AI Usage",
+  "description": "Provider quota and read-only token telemetry for Hermes Desktop and Web Dashboard.",
+  "icon": "Activity",
+  "version": "0.3.0",
+  "tab": { "path": "/ai-usage", "position": "after:analytics" },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
