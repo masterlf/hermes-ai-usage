@@ -8,6 +8,8 @@ let effect;
 let stateCursor = 0;
 const states = [];
 const calls = [];
+let holdNextUnfiltered = false;
+let resolveStaleHistory;
 const snapshot = {
   account: {
     available: true,
@@ -19,6 +21,7 @@ const snapshot = {
 };
 const history = {
   history: {
+    days: 7,
     totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, total_tokens: 170 },
     series: {
       bucket: 'day',
@@ -41,6 +44,11 @@ const React = {
       states[index] = typeof update === 'function' ? update(states[index]) : update;
     }];
   },
+  useRef: initial => {
+    const index = stateCursor++;
+    if (states[index] === undefined) states[index] = { current: initial };
+    return states[index];
+  },
   useCallback: fn => fn,
   useEffect: fn => { effect = fn; }
 };
@@ -50,7 +58,32 @@ const sandbox = {
       React,
       fetchJSON: path => {
         calls.push(path);
-        return Promise.resolve(path.includes('/snapshot') ? snapshot : history);
+        if (path.includes('/snapshot')) return Promise.resolve(snapshot);
+        if (path.includes('bucket_start=')) {
+          return Promise.resolve({ history: {
+            ...history.history,
+            selected_bucket_start: 1784851200,
+            rows: [{ ...history.history.rows[0], model: 'selected-model' }]
+          } });
+        }
+        if (holdNextUnfiltered) {
+          holdNextUnfiltered = false;
+          return new Promise(resolve => {
+            resolveStaleHistory = () => resolve({ history: {
+              ...history.history,
+              rows: [{ ...history.history.rows[0], model: 'stale-model' }]
+            } });
+          });
+        }
+        if (path.includes('days=30')) {
+          return Promise.resolve({ history: {
+            ...history.history,
+            days: 30,
+            totals: { ...history.history.totals, sessions: 30 },
+            rows: [{ ...history.history.rows[0], model: 'thirty-day-model' }]
+          } });
+        }
+        return Promise.resolve(history);
       }
     },
     __HERMES_PLUGINS__: { register: (name, component) => { registered = { name, component }; } },
@@ -85,6 +118,19 @@ function findFirst(node, predicate) {
   return findFirst(node.children || [], predicate);
 }
 
+function findAll(node, predicate, matches = []) {
+  if (node === null || node === undefined || node === false) return matches;
+  if (Array.isArray(node)) {
+    for (const child of node) findAll(child, predicate, matches);
+    return matches;
+  }
+  if (typeof node !== 'object') return matches;
+  if (typeof node.type === 'function') return findAll(node.type(node.props), predicate, matches);
+  if (predicate(node)) matches.push(node);
+  findAll(node.children || [], predicate, matches);
+  return matches;
+}
+
 function render() {
   stateCursor = 0;
   return registered.component();
@@ -101,20 +147,44 @@ function render() {
   if (!rendered.includes('86% restants')) throw new Error('provider quota was not rendered');
   if (!rendered.includes('gpt-test')) throw new Error('history row was not rendered: ' + rendered);
   if (!rendered.includes('Utilisation des tokens')) throw new Error('usage chart was not rendered: ' + rendered);
+  const periodButtons = findAll(render(), node => node.type === 'button' && node.props && typeof node.props.onClick === 'function');
+  const thirtyDayButton = periodButtons.find(node => flatten(node).includes('30d'));
+  if (!thirtyDayButton) throw new Error('30-day period button was not rendered');
+  thirtyDayButton.props.onClick();
+  const thirtyDayRendered = flatten(render());
+  if (!thirtyDayRendered.includes('Activité Hermes · 7 jours')) {
+    throw new Error('old seven-day totals were mislabeled before thirty-day data arrived: ' + thirtyDayRendered);
+  }
+  effect();
+  await new Promise(resolve => setImmediate(resolve));
+  const thirtyDayLoaded = flatten(render());
+  if (!thirtyDayLoaded.includes('Activité Hermes · 30 jours')) throw new Error('web totals scope did not follow loaded thirty-day data: ' + thirtyDayLoaded);
+  if (!thirtyDayLoaded.includes('thirty-day-model')) throw new Error('thirty-day history response was not rendered: ' + thirtyDayLoaded);
   if (!rendered.includes('abcd12345678')) throw new Error('log reference was not rendered: ' + rendered);
   if (rendered.includes('1970')) throw new Error('Unix seconds were rendered as milliseconds: ' + rendered);
   const chartBar = findFirst(render(), node => node.type === 'g' && node.props && node.props.role === 'button');
   if (!chartBar) throw new Error('interactive chart bar was not rendered');
+  holdNextUnfiltered = true;
+  effect();
+  await new Promise(resolve => setImmediate(resolve));
+  if (!resolveStaleHistory) throw new Error('stale history request was not held');
   chartBar.props.onClick();
   const filtered = flatten(render());
   if (!filtered.includes('Sessions du créneau sélectionné')) throw new Error('chart selection did not filter history: ' + filtered);
   effect();
   await new Promise(resolve => setImmediate(resolve));
-  flatten(render());
+  const selected = flatten(render());
+  if (!selected.includes('selected-model')) throw new Error('selected bucket response was not rendered: ' + selected);
+  resolveStaleHistory();
+  await new Promise(resolve => setImmediate(resolve));
+  const afterStale = flatten(render());
+  if (!afterStale.includes('selected-model') || afterStale.includes('stale-model')) {
+    throw new Error('stale unfiltered response overwrote selected bucket: ' + afterStale);
+  }
   if (!calls.some(path => path.includes('&bucket_start=1784851200'))) {
     throw new Error('chart selection did not request bucket-specific history: ' + calls.join(', '));
   }
-  if (calls.length !== 4 || !calls.every(path => path.startsWith('/api/plugins/ai-usage-monitor/'))) {
+  if (calls.length !== 8 || !calls.every(path => path.startsWith('/api/plugins/ai-usage-monitor/'))) {
     throw new Error('unexpected dashboard API destination');
   }
   console.log('dashboard bundle smoke: ok');

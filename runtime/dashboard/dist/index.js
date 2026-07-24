@@ -26,7 +26,7 @@
         remaining: "restants",
         used: "utilisés",
         reset: "Réinitialisation",
-        stats: "Activité Hermes · 7 jours",
+        stats: function (days) { return "Activité Hermes · " + (days === 1 ? "24 heures" : days + " jours"); },
         sessions: "Sessions",
         calls: "Appels API",
         input: "Entrée",
@@ -67,7 +67,7 @@
       remaining: "remaining",
       used: "used",
       reset: "Resets",
-      stats: "Hermes activity · 7 days",
+      stats: function (days) { return "Hermes activity · " + (days === 1 ? "24 hours" : days + " days"); },
       sessions: "Sessions",
       calls: "API calls",
       input: "Input",
@@ -176,10 +176,15 @@
   }
 
   function StatsCard(props) {
-    const totals = props.history && props.history.totals || {};
+    const history = props.history || {};
+    const totals = history.totals || {};
+    const historyDays = Number(history.days);
+    const scopeDays = Number.isInteger(historyDays) && historyDays >= 1 && historyDays <= 90
+      ? historyDays
+      : props.days;
     const t = props.t;
     return h("section", { className: "aum-card" },
-      h("h2", { className: "aum-card-title" }, t.stats),
+      h("h2", { className: "aum-card-title" }, t.stats(scopeDays)),
       h("p", { className: "aum-card-meta" }, t.source),
       h("div", { className: "aum-stats" },
         h(Stat, { label: t.sessions, value: compact(totals.sessions) }),
@@ -356,12 +361,15 @@
     const selectionState = React.useState(null);
     const selectedBucket = selectionState[0];
     const setSelectedBucket = selectionState[1];
+    const requestGeneration = React.useRef(0);
 
     const load = React.useCallback(function (manual) {
+      const generation = ++requestGeneration.current;
       setData(function (previous) { return Object.assign({}, previous, { refreshing: !!manual, error: false }); });
       const bucketQuery = selectedBucket === null ? "" : "&bucket_start=" + encodeURIComponent(String(selectedBucket));
       return Promise.all([api("/snapshot?provider=auto"), api("/history?days=" + days + "&limit=200" + bucketQuery)])
         .then(function (responses) {
+          if (generation !== requestGeneration.current) return;
           setData({
             loading: false,
             refreshing: false,
@@ -371,6 +379,7 @@
           });
         })
         .catch(function () {
+          if (generation !== requestGeneration.current) return;
           setData(function (previous) { return Object.assign({}, previous, { loading: false, refreshing: false, error: true }); });
         });
     }, [days, selectedBucket]);
@@ -378,7 +387,10 @@
     React.useEffect(function () {
       load(false);
       const timer = window.setInterval(function () { load(false); }, 60000);
-      return function () { window.clearInterval(timer); };
+      return function () {
+        window.clearInterval(timer);
+        requestGeneration.current += 1;
+      };
     }, [load]);
 
     if (data.loading) {
@@ -406,7 +418,7 @@
       data.error ? h("div", { className: "aum-error", role: "alert" }, t.error) : null,
       h("div", { className: "aum-grid" },
         h(AccountCard, { account: data.account, t: t }),
-        h(StatsCard, { history: data.history, t: t })
+        h(StatsCard, { history: data.history, t: t, days: days })
       ),
       h(UsageChart, {
         history: data.history,

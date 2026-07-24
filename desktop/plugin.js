@@ -399,7 +399,7 @@ function HistoryCard({ history, selectedBucket }) {
           }),
           jsx('span', {
             className: 'text-xs tabular-nums text-(--ui-text-quaternary)',
-            children: `${compactNumber(totals.total_tokens)} tok · ${compactNumber(totals.api_calls)} calls`
+            children: t('periodTotals', compactNumber(totals.total_tokens), compactNumber(totals.api_calls))
           })
         ]
       }),
@@ -516,7 +516,7 @@ export default {
         sessionTitle: 'Active session',
         historyTitle: 'Recent usage',
         historySubtitle: 'Session-level history; no prompt content is read or displayed.',
-        filteredHistory: 'Sessions in the selected chart bucket.',
+        filteredHistory: 'Selected bucket sessions.',
         truncatedHistory: 'Bounded results: some sessions in this bucket are not displayed.',
         usageChart: 'Token usage',
         chartHint: 'UTC buckets · select a bar to isolate its sessions below.',
@@ -539,6 +539,7 @@ export default {
         modelProvider: 'Model · provider',
         source: 'Surface',
         calls: 'Calls',
+        periodTotals: (tokens, calls) => `Period total: ${tokens} tok · ${calls} calls`,
         sessions: 'sessions',
         tokens: 'Tokens',
         refresh: 'Refresh',
@@ -555,7 +556,7 @@ export default {
         sessionTitle: 'Session active',
         historyTitle: 'Consommation récente',
         historySubtitle: 'Historique par session ; aucun contenu de prompt n’est lu ni affiché.',
-        filteredHistory: 'Sessions du créneau sélectionné dans le graphique.',
+        filteredHistory: 'Sessions du créneau sélectionné.',
         truncatedHistory: 'Résultats bornés : certaines sessions du créneau ne sont pas affichées.',
         usageChart: 'Utilisation des tokens',
         chartHint: 'Créneaux UTC · sélectionne une barre pour isoler ses sessions ci-dessous.',
@@ -578,6 +579,7 @@ export default {
         modelProvider: 'Modèle · fournisseur',
         source: 'Surface',
         calls: 'Appels',
+        periodTotals: (tokens, calls) => `Total de la période : ${tokens} tok · ${calls} appels`,
         sessions: 'sessions',
         tokens: 'Tokens',
         refresh: 'Actualiser',

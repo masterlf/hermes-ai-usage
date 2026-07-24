@@ -31,6 +31,13 @@ _account_cache_lock = threading.Lock()
 _SAFE_PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _SAFE_SESSION_REF_RE = re.compile(r"^[A-Za-z0-9._-]{12,20}$")
 _SESSION_REF_WIDTHS = (12, 16, 20)
+_TOTAL_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+)
+_TOKEN_FIELDS = (*_TOTAL_TOKEN_FIELDS, "reasoning_tokens")
 
 
 def _utc_now_iso() -> str:
@@ -203,6 +210,9 @@ def _global_session_ref_collisions(
                 if _SAFE_SESSION_REF_RE.fullmatch(reference):
                     candidates[width].add(reference)
 
+    if not any(candidates.values()):
+        return {width: set() for width in _SESSION_REF_WIDTHS}
+
     counts = {width: dict.fromkeys(references, 0) for width, references in candidates.items()}
     for row in connection.execute("SELECT id FROM sessions"):
         session_id = str(row["id"] or "")
@@ -233,6 +243,14 @@ def _nonnegative_int(value: Any) -> int:
         return 0
 
 
+def _normalise_token_counts(record: dict[str, Any]) -> dict[str, Any]:
+    for key in _TOKEN_FIELDS:
+        record[key] = _nonnegative_int(record.get(key))
+    record["reasoning_tokens"] = min(record["reasoning_tokens"], record["output_tokens"])
+    record["total_tokens"] = sum(record[key] for key in _TOTAL_TOKEN_FIELDS)
+    return record
+
+
 def _token_history(days: int, limit: int, bucket_start: int | None = None) -> dict[str, Any]:
     db_path = Path(get_hermes_home()) / "state.db"
     now = time.time()
@@ -242,7 +260,7 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
     last_bucket = int(now // bucket_seconds) * bucket_seconds
     if bucket_start is not None and (
         bucket_start % bucket_seconds != 0
-        or bucket_start < first_bucket
+        or bucket_start < first_bucket - bucket_seconds
         or bucket_start > last_bucket
     ):
         raise ValueError("invalid bucket")
@@ -276,8 +294,9 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
         WHERE COALESCE(ended_at, started_at) >= ?
           AND COALESCE(ended_at, started_at) <= ?
           AND (
-              COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
-              + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+              MAX(COALESCE(input_tokens, 0), 0) + MAX(COALESCE(output_tokens, 0), 0)
+              + MAX(COALESCE(cache_read_tokens, 0), 0)
+              + MAX(COALESCE(cache_write_tokens, 0), 0)
           ) > 0
           AND (
               ? IS NULL OR (
@@ -291,44 +310,52 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
     aggregate_query = """
         SELECT
             COUNT(*) AS sessions,
-            COALESCE(SUM(api_call_count), 0) AS api_calls,
-            COALESCE(SUM(input_tokens), 0) AS input_tokens,
-            COALESCE(SUM(output_tokens), 0) AS output_tokens,
-            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
-            COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
-            COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+            COALESCE(SUM(MAX(COALESCE(api_call_count, 0), 0)), 0) AS api_calls,
+            COALESCE(SUM(MAX(COALESCE(input_tokens, 0), 0)), 0) AS input_tokens,
+            COALESCE(SUM(MAX(COALESCE(output_tokens, 0), 0)), 0) AS output_tokens,
+            COALESCE(SUM(MAX(COALESCE(cache_read_tokens, 0), 0)), 0) AS cache_read_tokens,
+            COALESCE(SUM(MAX(COALESCE(cache_write_tokens, 0), 0)), 0) AS cache_write_tokens,
             COALESCE(SUM(
-                COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
-                + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+                MIN(MAX(COALESCE(reasoning_tokens, 0), 0), MAX(COALESCE(output_tokens, 0), 0))
+            ), 0) AS reasoning_tokens,
+            COALESCE(SUM(
+                MAX(COALESCE(input_tokens, 0), 0) + MAX(COALESCE(output_tokens, 0), 0)
+                + MAX(COALESCE(cache_read_tokens, 0), 0)
+                + MAX(COALESCE(cache_write_tokens, 0), 0)
             ), 0) AS total_tokens
         FROM sessions
         WHERE COALESCE(ended_at, started_at) >= ?
           AND COALESCE(ended_at, started_at) <= ?
           AND (
-              COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
-              + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+              MAX(COALESCE(input_tokens, 0), 0) + MAX(COALESCE(output_tokens, 0), 0)
+              + MAX(COALESCE(cache_read_tokens, 0), 0)
+              + MAX(COALESCE(cache_write_tokens, 0), 0)
           ) > 0
     """
     series_query = """
         SELECT
             CAST(COALESCE(ended_at, started_at) / ? AS INTEGER) * ? AS bucket_start,
             COUNT(*) AS sessions,
-            COALESCE(SUM(api_call_count), 0) AS api_calls,
-            COALESCE(SUM(input_tokens), 0) AS input_tokens,
-            COALESCE(SUM(output_tokens), 0) AS output_tokens,
-            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
-            COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
-            COALESCE(SUM(reasoning_tokens), 0) AS reasoning_tokens,
+            COALESCE(SUM(MAX(COALESCE(api_call_count, 0), 0)), 0) AS api_calls,
+            COALESCE(SUM(MAX(COALESCE(input_tokens, 0), 0)), 0) AS input_tokens,
+            COALESCE(SUM(MAX(COALESCE(output_tokens, 0), 0)), 0) AS output_tokens,
+            COALESCE(SUM(MAX(COALESCE(cache_read_tokens, 0), 0)), 0) AS cache_read_tokens,
+            COALESCE(SUM(MAX(COALESCE(cache_write_tokens, 0), 0)), 0) AS cache_write_tokens,
             COALESCE(SUM(
-                COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
-                + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+                MIN(MAX(COALESCE(reasoning_tokens, 0), 0), MAX(COALESCE(output_tokens, 0), 0))
+            ), 0) AS reasoning_tokens,
+            COALESCE(SUM(
+                MAX(COALESCE(input_tokens, 0), 0) + MAX(COALESCE(output_tokens, 0), 0)
+                + MAX(COALESCE(cache_read_tokens, 0), 0)
+                + MAX(COALESCE(cache_write_tokens, 0), 0)
             ), 0) AS total_tokens
         FROM sessions
         WHERE COALESCE(ended_at, started_at) >= ?
           AND COALESCE(ended_at, started_at) <= ?
           AND (
-              COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
-              + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+              MAX(COALESCE(input_tokens, 0), 0) + MAX(COALESCE(output_tokens, 0), 0)
+              + MAX(COALESCE(cache_read_tokens, 0), 0)
+              + MAX(COALESCE(cache_write_tokens, 0), 0)
           ) > 0
         GROUP BY bucket_start
         ORDER BY bucket_start
@@ -339,8 +366,9 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
         WHERE COALESCE(ended_at, started_at) >= ?
           AND COALESCE(ended_at, started_at) <= ?
           AND (
-              COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
-              + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)
+              MAX(COALESCE(input_tokens, 0), 0) + MAX(COALESCE(output_tokens, 0), 0)
+              + MAX(COALESCE(cache_read_tokens, 0), 0)
+              + MAX(COALESCE(cache_write_tokens, 0), 0)
           ) > 0
           AND (
               ? IS NULL OR (
@@ -392,33 +420,19 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
         if connection is not None:
             connection.close()
 
-    totals: dict[str, Any] = {
-        key: _nonnegative_int(aggregate.get(key))
-        for key in (
-            "sessions",
-            "api_calls",
-            "input_tokens",
-            "output_tokens",
-            "cache_read_tokens",
-            "cache_write_tokens",
-            "reasoning_tokens",
-            "total_tokens",
-        )
-    }
-    points_by_start = {
-        _nonnegative_int(point.get("bucket_start")): {
-            key: _nonnegative_int(point.get(key))
-            for key in (
-                "sessions",
-                "api_calls",
-                "input_tokens",
-                "output_tokens",
-                "cache_read_tokens",
-                "cache_write_tokens",
-                "reasoning_tokens",
-                "total_tokens",
-            )
+    totals: dict[str, Any] = _normalise_token_counts(
+        {
+            key: _nonnegative_int(aggregate.get(key))
+            for key in ("sessions", "api_calls", *_TOKEN_FIELDS)
         }
+    )
+    points_by_start = {
+        _nonnegative_int(point.get("bucket_start")): _normalise_token_counts(
+            {
+                key: _nonnegative_int(point.get(key))
+                for key in ("sessions", "api_calls", *_TOKEN_FIELDS)
+            }
+        )
         for point in raw_points
     }
     points = []
@@ -450,24 +464,12 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
     for row in raw_rows:
         session_id = str(row.pop("id", "") or "")
         provider = _safe_provider(row.pop("billing_provider", None)) or "unknown"
-        for key in (
-            "input_tokens",
-            "output_tokens",
-            "cache_read_tokens",
-            "cache_write_tokens",
-            "reasoning_tokens",
-            "api_call_count",
-        ):
-            row[key] = _nonnegative_int(row.get(key))
-        token_total = sum(
-            row[key]
-            for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
-        )
+        row["api_call_count"] = _nonnegative_int(row.get("api_call_count"))
+        _normalise_token_counts(row)
         item = {
             **row,
             "source": _safe_text(row.get("source"), 80) or "unknown",
             "model": _safe_text(row.get("model"), 160) or "unknown",
-            "total_tokens": token_total,
             "provider": provider,
             "session_ref": references.get(session_id),
         }

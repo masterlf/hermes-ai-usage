@@ -285,6 +285,25 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(len(payload["rows"][0]["session_ref"]), 16)
         self.assertNotEqual(payload["rows"][0]["session_ref"], "same12345678")
 
+    def test_global_collision_lookup_skips_sql_for_empty_or_invalid_candidates(self):
+        class NoExecuteConnection:
+            def execute(self, _sql):
+                raise AssertionError("execute must not be called without valid suffix candidates")
+
+        expected = {width: set() for width in module._SESSION_REF_WIDTHS}
+
+        self.assertEqual(
+            module._global_session_ref_collisions(NoExecuteConnection(), []),
+            expected,
+        )
+        self.assertEqual(
+            module._global_session_ref_collisions(
+                NoExecuteConnection(),
+                ["short", "abcdefghijkl", "prefix_bad\u202eref12345678"],
+            ),
+            expected,
+        )
+
     def test_history_uses_end_time_excludes_future_and_reports_truncation(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -318,6 +337,95 @@ class HistoryTests(unittest.TestCase):
         self.assertTrue(payload["rows_truncated"])
         self.assertEqual(payload["selected_bucket_start"], 0)
         self.assertEqual(len(payload["rows"]), 2)
+
+    def test_negative_counts_are_clamped_before_aggregation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._create_state_db(home)
+            database = sqlite3.connect(home / "state.db")
+            database.executemany(
+                """INSERT INTO sessions VALUES (
+                    ?, 'cli', 'model', 'provider',
+                    strftime('%s','now'), strftime('%s','now'),
+                    ?, ?, 0, 0, ?, ?, NULL, 0.0, 'estimated'
+                )""",
+                [
+                    ("20260724_160000_negative12345678", -10, 20, 30, -5),
+                    ("20260724_160100_positive12345678", 30, 5, 3, 3),
+                    ("20260724_160200_reasoning12345678", 0, 10, 100, 1),
+                ],
+            )
+            database.commit()
+            database.close()
+
+            with mock.patch.object(module, "get_hermes_home", lambda: home):
+                payload = module._token_history(7, 30)
+
+        normalized_api_calls = sum(row["api_call_count"] for row in payload["rows"])
+        self.assertTrue(
+            all(row["reasoning_tokens"] <= row["output_tokens"] for row in payload["rows"])
+        )
+        self.assertTrue(
+            all(
+                point["reasoning_tokens"] <= point["output_tokens"]
+                for point in payload["series"]["points"]
+            )
+        )
+        self.assertLessEqual(
+            payload["totals"]["reasoning_tokens"],
+            payload["totals"]["output_tokens"],
+        )
+        self.assertEqual(sum(row["total_tokens"] for row in payload["rows"]), 65)
+        self.assertEqual(payload["totals"]["total_tokens"], 65)
+        self.assertEqual(sum(point["total_tokens"] for point in payload["series"]["points"]), 65)
+        self.assertEqual(payload["totals"]["input_tokens"], 30)
+        self.assertEqual(payload["totals"]["output_tokens"], 35)
+        self.assertEqual(sum(row["reasoning_tokens"] for row in payload["rows"]), 33)
+        self.assertEqual(payload["totals"]["reasoning_tokens"], 33)
+        self.assertEqual(
+            sum(point["reasoning_tokens"] for point in payload["series"]["points"]),
+            33,
+        )
+        self.assertEqual(normalized_api_calls, 4)
+        self.assertEqual(payload["totals"]["api_calls"], normalized_api_calls)
+        self.assertEqual(
+            sum(point["api_calls"] for point in payload["series"]["points"]),
+            normalized_api_calls,
+        )
+
+    def test_normalise_token_counts_bounds_reasoning_to_output(self):
+        normalized = module._normalise_token_counts(
+            {
+                "input_tokens": -5,
+                "output_tokens": 7,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 11,
+            }
+        )
+
+        self.assertEqual(normalized["input_tokens"], 0)
+        self.assertEqual(normalized["output_tokens"], 7)
+        self.assertEqual(normalized["reasoning_tokens"], 7)
+        self.assertEqual(normalized["total_tokens"], 7)
+
+    def test_previous_boundary_bucket_has_one_bucket_of_clock_grace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._create_state_db(home)
+            with (
+                mock.patch.object(module, "get_hermes_home", lambda: home),
+                mock.patch.object(module.time, "time", return_value=8 * 86400),
+            ):
+                payload = module._token_history(7, 30, 0)
+
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["selected_bucket_start"], 0)
+        with (
+            mock.patch.object(module.time, "time", return_value=8 * 86400),
+            self.assertRaises(ValueError),
+        ):
+            module._token_history(7, 30, -86400)
 
     def test_history_error_does_not_reflect_database_details(self):
         with tempfile.TemporaryDirectory() as tmp:
