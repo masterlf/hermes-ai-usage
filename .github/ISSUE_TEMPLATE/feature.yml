@@ -1,0 +1,32 @@
+name: Feature proposal
+description: Propose a scoped improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or security problem needs solving?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Privacy and threat-model impact
+      description: Address credentials, profile boundaries, stored data, browser sinks, and dependencies.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Product boundaries
+      options:
+        - label: The proposal does not require prompt/message/tool-content collection.
+        - label: The proposal will not label local estimates as official provider quota.

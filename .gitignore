@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# JavaScript / editors / OS
+node_modules/
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Hermes runtime and sensitive local state
+.hermes/
+config.yaml
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+backups/
+backup/
+credentials*
+secrets*
+
+# Build / audit output
+dist-audit/
+*.sarif
+coverage.xml

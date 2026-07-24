@@ -1,0 +1,5 @@
+# Security-sensitive project: all changes require maintainer review.
+* @masterlf
+/.github/ @masterlf
+/runtime/dashboard/plugin_api.py @masterlf
+/scripts/security_invariants.py @masterlf

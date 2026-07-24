@@ -1,0 +1,44 @@
+/* AI Usage Monitor — Hermes web dashboard */
+.aum-page { display: flex; flex-direction: column; gap: 1rem; padding: 1rem; color: var(--color-foreground); }
+.aum-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 1.25rem; border: 1px solid var(--color-border); background: radial-gradient(circle at 10% 0, color-mix(in srgb, var(--color-primary) 16%, transparent), transparent 36%), color-mix(in srgb, var(--color-card) 92%, transparent); padding: 1.25rem; }
+.aum-kicker { color: var(--color-muted-foreground); font-family: var(--font-mono, ui-monospace, monospace); font-size: .7rem; letter-spacing: .15em; text-transform: uppercase; }
+.aum-title { margin: .35rem 0 0; font-size: clamp(1.8rem, 4vw, 3.8rem); line-height: .95; letter-spacing: -.055em; }
+.aum-subtitle { max-width: 52rem; margin: .7rem 0 0; color: var(--color-muted-foreground); font-size: .88rem; line-height: 1.5; }
+.aum-hero-actions { display: flex; flex-direction: column; align-items: flex-end; gap: .55rem; }
+.aum-binding { font-family: var(--font-mono, ui-monospace, monospace); font-size: 1.25rem; font-weight: 750; white-space: nowrap; }
+.aum-button { border: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-card) 78%, transparent); color: var(--color-foreground); padding: .5rem .85rem; cursor: pointer; font: inherit; font-size: .78rem; }
+.aum-button:hover:not(:disabled) { border-color: var(--color-ring); background: color-mix(in srgb, var(--color-primary) 14%, var(--color-card)); }
+.aum-button:disabled { cursor: wait; opacity: .55; }
+.aum-error { border: 1px solid var(--color-destructive); background: color-mix(in srgb, var(--color-destructive) 9%, transparent); color: var(--color-destructive); padding: .75rem .9rem; font-size: .82rem; }
+.aum-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 1rem; }
+.aum-card { border: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-card) 90%, transparent); padding: 1rem; }
+.aum-card-title { margin: 0; font-size: .82rem; font-family: var(--font-mono, ui-monospace, monospace); letter-spacing: .11em; text-transform: uppercase; }
+.aum-card-meta { margin: .4rem 0 0; color: var(--color-muted-foreground); font-size: .76rem; }
+.aum-window-list { display: grid; gap: 1rem; margin-top: 1rem; }
+.aum-window-head { display: flex; justify-content: space-between; gap: .75rem; align-items: baseline; font-size: .86rem; }
+.aum-window-value { font-family: var(--font-mono, ui-monospace, monospace); font-weight: 700; }
+.aum-progress { height: .58rem; margin-top: .45rem; overflow: hidden; border: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-muted) 60%, transparent); }
+.aum-progress-fill { height: 100%; background: linear-gradient(90deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 50%, var(--color-foreground))); transition: width .3s ease; }
+.aum-window-foot { margin-top: .4rem; color: var(--color-muted-foreground); font-size: .72rem; }
+.aum-details { margin-top: .9rem; color: var(--color-muted-foreground); font-size: .74rem; line-height: 1.45; }
+.aum-caveat { margin: .9rem 0 0; border-top: 1px solid var(--color-border); padding-top: .75rem; color: var(--color-muted-foreground); font-size: .74rem; line-height: 1.45; }
+.aum-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; margin-top: 1rem; }
+.aum-stat { border: 1px solid var(--color-border); padding: .75rem; background: color-mix(in srgb, var(--color-muted) 28%, transparent); }
+.aum-stat-label { color: var(--color-muted-foreground); font-size: .68rem; letter-spacing: .09em; text-transform: uppercase; }
+.aum-stat-value { margin-top: .35rem; font-family: var(--font-mono, ui-monospace, monospace); font-size: 1.15rem; font-weight: 750; }
+.aum-table-card { padding: 0; overflow: hidden; }
+.aum-table-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--color-border); }
+.aum-table-wrap { overflow-x: auto; }
+.aum-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: .76rem; }
+.aum-table th { color: var(--color-muted-foreground); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; text-align: left; }
+.aum-table th, .aum-table td { padding: .65rem .8rem; border-bottom: 1px solid var(--color-border); }
+.aum-table tbody tr:last-child td { border-bottom: 0; }
+.aum-table tbody tr:hover { background: color-mix(in srgb, var(--color-muted) 30%, transparent); }
+.aum-table .aum-num { text-align: right; font-family: var(--font-mono, ui-monospace, monospace); font-variant-numeric: tabular-nums; }
+.aum-model { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aum-muted { color: var(--color-muted-foreground); }
+.aum-empty { padding: 1.5rem; color: var(--color-muted-foreground); font-size: .82rem; }
+.aum-loading { min-height: 14rem; display: grid; place-items: center; border: 1px dashed var(--color-border); color: var(--color-muted-foreground); font-family: var(--font-mono, ui-monospace, monospace); }
+.aum-source-note { margin: 0; color: var(--color-muted-foreground); font-size: .72rem; line-height: 1.45; }
+@media (max-width: 980px) { .aum-grid { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .aum-page { padding: .75rem; } .aum-hero { align-items: stretch; flex-direction: column; } .aum-hero-actions { align-items: flex-start; } .aum-stats { grid-template-columns: 1fr; } }

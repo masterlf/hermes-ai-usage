@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install locked development dependencies
+        run: python -m pip install --require-hashes -r requirements-dev.txt
+
+      - name: Run backend tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Validate frontend bundles
+        run: |
+          node --check desktop/plugin.js
+          node --check runtime/dashboard/dist/index.js
+          node tests/test_dashboard_bundle.cjs
+          node tests/test_desktop_bundle.cjs
+
+      - name: Lint Python
+        run: python -m ruff check .
+
+      - name: Run Bandit
+        run: python -m bandit -c pyproject.toml -r runtime/dashboard
+
+      - name: Audit locked dependencies
+        run: python -m pip_audit -r requirements-dev.txt --require-hashes
+
+      - name: Verify security and privacy invariants
+        run: python scripts/security_invariants.py
+
+      - name: Audit GitHub Actions workflows
+        run: zizmor .github/workflows --persona=pedantic

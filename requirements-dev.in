@@ -1,0 +1,7 @@
+# Development and CI dependencies only. The plugin adds no runtime dependencies to Hermes.
+bandit[toml]
+fastapi
+httpx2
+pip-audit
+ruff
+zizmor

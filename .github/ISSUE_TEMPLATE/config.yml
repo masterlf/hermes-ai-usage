@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/masterlf/hermes-ai-usage/security/advisories/new
+    about: Report vulnerabilities privately. Do not disclose security issues publicly.
+  - name: Support and safe log guidance
+    url: https://github.com/masterlf/hermes-ai-usage/blob/main/SUPPORT.md
+    about: Read before attaching diagnostics.

@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a reproducible, non-security defect
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, config.yaml, .env files, state.db, prompt content, transcripts, cookies, or provider responses. Security issues belong in a private advisory.
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version or commit
+    validations:
+      required: true
+  - type: input
+    id: hermes
+    attributes:
+      label: Hermes Agent version
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Web Dashboard
+        - Hermes Desktop
+        - Backend API
+        - Installation or CI
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Sanitized reproduction steps
+      description: Use synthetic values. Do not paste sensitive logs or databases.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, prompts, transcripts, cookies, databases, and local configuration.
+          required: true
+        - label: This is not a vulnerability report.
+          required: true
