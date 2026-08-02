@@ -68,16 +68,33 @@ def python_invariants() -> None:
         fail("complete session identifiers must be removed before serialization")
     if '"session_ref": references.get(session_id)' not in source:
         fail("history rows must expose only the bounded session reference")
+    for required in (
+        'surface = _safe_surface(row.pop("source_raw", None))',
+        '"source": surface',
+        'profile = _safe_profile(row.pop("profile_raw", None))',
+        '"duration_seconds": duration_seconds',
+        '"is_active": is_active',
+    ):
+        if required not in source:
+            fail("session attribution must remain categorical, bounded, and privacy-safe")
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             value = node.value
+            if "SELECT *" in value.upper():
+                fail("runtime SQL must use explicit column allowlists")
             if re.search(r"\b(INSERT|UPDATE|DELETE|ALTER|DROP|CREATE)\b", value, re.I):
                 fail("runtime Python contains a SQL mutation statement")
             if "SELECT" in value.upper() and re.search(
                 r"\b(messages?|prompts?|content)\b", value, re.I
             ):
                 fail("runtime SQL references message/prompt content")
+            if "SELECT" in value.upper() and re.search(
+                r"\b(title|cwd|system_prompt|origin_json|chat_id|thread_id|user_id)\b",
+                value,
+                re.I,
+            ):
+                fail("runtime SQL selects prohibited session metadata")
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             names = [alias.name.split(".")[0] for alias in node.names]
             if {"subprocess", "pickle", "shelve"}.intersection(names):

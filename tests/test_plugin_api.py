@@ -154,6 +154,112 @@ class HistoryTests(unittest.TestCase):
         db.commit()
         db.close()
 
+    @staticmethod
+    def _create_current_state_db(home: Path) -> None:
+        db = sqlite3.connect(home / "state.db")
+        db.execute(
+            """CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, source TEXT, model TEXT, billing_provider TEXT,
+                started_at REAL, ended_at REAL, input_tokens INTEGER,
+                output_tokens INTEGER, cache_read_tokens INTEGER,
+                cache_write_tokens INTEGER, reasoning_tokens INTEGER,
+                api_call_count INTEGER, profile_name TEXT, parent_session_id TEXT,
+                model_config TEXT, end_reason TEXT, title TEXT, cwd TEXT,
+                system_prompt TEXT, chat_id TEXT
+            )"""
+        )
+        db.commit()
+        db.close()
+
+    def test_privacy_safe_attribution_profile_and_duration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._create_current_state_db(home)
+            database = sqlite3.connect(home / "state.db")
+            database.executemany(
+                """INSERT INTO sessions VALUES (
+                    ?, ?, 'gpt-test', 'openai-codex', ?, ?, 10, 5, 0, 0, 1, 1,
+                    ?, ?, ?, ?, ?, ?, ?, ?
+                )""",
+                [
+                    (
+                        "cron_secret-job_123456789012", " cron ", 1000, 1042.9,
+                        "ops-1", None, None, None, "customer cron title",
+                        "/secret/path", "secret prompt", "secret-chat",
+                    ),
+                    (
+                        "child_session_abcdefghijkl", "CLI", 1100, None,
+                        "security.dev", "missing-parent",
+                        '{"_delegate_from":"secret-parent-id"}', None,
+                        "customer delegate goal", "/private", "prompt data", "chat-2",
+                    ),
+                    (
+                        "hostile_source_zyxwvutsrqpo", "desktop-customer", 1200, 1199,
+                        "bad profile", None, "not json", None,
+                        "incident Red Wolf", "/srv/customer", "classified", "chat-3",
+                    ),
+                ],
+            )
+            database.commit()
+            database.close()
+
+            with (
+                mock.patch.object(module, "get_hermes_home", lambda: home),
+                mock.patch.object(module.time, "time", return_value=1300),
+            ):
+                payload = module._token_history(7, 30)
+
+        scheduled = next(row for row in payload["rows"] if row["surface"] == "cron")
+        delegated = next(
+            row for row in payload["rows"] if row["workload_type"] == "subagent"
+        )
+        hostile = next(row for row in payload["rows"] if row["surface"] == "other")
+        self.assertEqual(scheduled["source"], "cron")
+        self.assertEqual(scheduled["workload_type"], "scheduled")
+        self.assertEqual(scheduled["profile"], "ops-1")
+        self.assertEqual(scheduled["duration_seconds"], 42)
+        self.assertFalse(scheduled["is_active"])
+        self.assertEqual(delegated["surface"], "cli")
+        self.assertEqual(delegated["profile"], "security.dev")
+        self.assertEqual(delegated["duration_seconds"], 200)
+        self.assertTrue(delegated["is_active"])
+        self.assertIsNone(hostile["profile"])
+        self.assertIsNone(hostile["duration_seconds"])
+        self.assertFalse(hostile["is_active"])
+        serialized = json.dumps(payload)
+        for secret in (
+            "desktop-customer", "customer cron title", "customer delegate goal",
+            "secret-parent-id", "/secret/path", "/private", "secret prompt",
+            "prompt data", "secret-chat", "incident Red Wolf", "classified",
+        ):
+            self.assertNotIn(secret, serialized)
+
+    def test_optional_session_columns_fail_closed_with_stable_shape(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._create_state_db(home)
+            database = sqlite3.connect(home / "state.db")
+            database.execute(
+                """INSERT INTO sessions VALUES (
+                    'legacy_session_abcd12345678', 'desktop', 'gpt-test', 'openai-codex',
+                    1000, 1010, 10, 5, 0, 0, 1, 1, NULL, 0, 'estimated'
+                )"""
+            )
+            database.commit()
+            database.close()
+            with (
+                mock.patch.object(module, "get_hermes_home", lambda: home),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                row = module._token_history(7, 30)["rows"][0]
+
+        self.assertEqual(row["surface"], "desktop")
+        self.assertEqual(row["source"], "desktop")
+        self.assertEqual(row["workload_type"], "interactive")
+        self.assertIsNone(row["profile"])
+        self.assertEqual(row["duration_seconds"], 10)
+        self.assertFalse(row["is_active"])
+
     def test_history_reads_counters_without_message_content(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
