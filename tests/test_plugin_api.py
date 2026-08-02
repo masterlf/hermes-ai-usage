@@ -260,6 +260,70 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(row["duration_seconds"], 10)
         self.assertFalse(row["is_active"])
 
+    def test_branch_classification_supports_stable_and_legacy_markers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._create_current_state_db(home)
+            database = sqlite3.connect(home / "state.db")
+
+            def session(
+                session_id,
+                started_at,
+                ended_at,
+                parent_id=None,
+                model_config=None,
+                end_reason=None,
+            ):
+                return (
+                    session_id, "cli", "gpt-test", "openai-codex",
+                    started_at, ended_at, 10, 5, 0, 0, 1, 1,
+                    "default", parent_id, model_config, end_reason,
+                    None, None, None, None,
+                )
+
+            database.executemany(
+                """INSERT INTO sessions VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )""",
+                [
+                    session("legacy_parent_aaaa12345678", 900, 1000, end_reason="branched"),
+                    session(
+                        "legacy_child_bbbb12345678", 1000, 1010,
+                        parent_id="legacy_parent_aaaa12345678",
+                    ),
+                    session("stable_parent_cccc12345678", 900, 1000),
+                    session(
+                        "stable_child_dddd12345678", 1000, 1010,
+                        parent_id="stable_parent_cccc12345678",
+                        model_config='{"_branched_from":"stable-parent"}',
+                    ),
+                    session("compression_parent_eeee12345678", 900, 1000, end_reason="compression"),
+                    session(
+                        "compression_child_ffff12345678", 1000, 1010,
+                        parent_id="compression_parent_eeee12345678",
+                    ),
+                    session(
+                        "delegate_child_gggg12345678", 1000, 1010,
+                        parent_id="legacy_parent_aaaa12345678",
+                        model_config='{"_delegate_from":"delegate-parent"}',
+                    ),
+                ],
+            )
+            database.commit()
+            database.close()
+
+            with (
+                mock.patch.object(module, "get_hermes_home", lambda: home),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                rows = module._token_history(7, 30)["rows"]
+
+        types = {row["session_ref"]: row["workload_type"] for row in rows}
+        self.assertEqual(types["bbbb12345678"], "branch")
+        self.assertEqual(types["dddd12345678"], "branch")
+        self.assertEqual(types["ffff12345678"], "continuation")
+        self.assertEqual(types["gggg12345678"], "subagent")
+
     def test_history_reads_counters_without_message_content(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)

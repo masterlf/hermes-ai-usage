@@ -340,17 +340,28 @@ def _history_rows_query(columns: set[str]) -> str:
         if "parent_session_id" in columns
         else "0 AS has_parent"
     )
+    can_join_parent = {"parent_session_id", "end_reason"}.issubset(columns)
+    stable_branch = """json_valid(s.model_config)
+            AND json_type(s.model_config, '$._branched_from') NOT IN ('null')"""
+    legacy_branch = """parent.end_reason = 'branched'
+            AND s.started_at >= parent.ended_at"""
     if "model_config" in columns:
         delegate = """CASE WHEN json_valid(s.model_config)
             AND json_type(s.model_config, '$._delegate_from') NOT IN ('null')
             THEN 1 ELSE 0 END AS is_delegate"""
-        branch = """CASE WHEN json_valid(s.model_config)
-            AND json_type(s.model_config, '$._branched_from') NOT IN ('null')
-            THEN 1 ELSE 0 END AS is_branch"""
     else:
         delegate = "0 AS is_delegate"
-        branch = "0 AS is_branch"
-    can_join_parent = {"parent_session_id", "end_reason"}.issubset(columns)
+    branch_conditions = []
+    if "model_config" in columns:
+        branch_conditions.append(stable_branch)
+    if can_join_parent:
+        branch_conditions.append(legacy_branch)
+    branch = (
+        "CASE WHEN " + " OR ".join(f"({condition})" for condition in branch_conditions)
+        + " THEN 1 ELSE 0 END AS is_branch"
+        if branch_conditions
+        else "0 AS is_branch"
+    )
     continuation = (
         "CASE WHEN parent.end_reason = 'compression' THEN 1 ELSE 0 END AS is_continuation"
         if can_join_parent
