@@ -10,7 +10,7 @@ import {
   useQuery,
   useValue
 } from '@hermes/plugin-sdk'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'ai-usage-monitor'
@@ -58,10 +58,52 @@ function sessionReference(value) {
 }
 
 function bindingWindow(account) {
-  const candidates = (account?.windows || []).filter(window => Number.isFinite(window.remaining_percent))
+  const candidates = (account?.windows || []).filter(window => quotaPercentages(window).used !== null)
   return candidates.length ? candidates.reduce((lowest, current) =>
-    current.remaining_percent < lowest.remaining_percent ? current : lowest
+    quotaPercentages(current).remaining < quotaPercentages(lowest).remaining ? current : lowest
   ) : null
+}
+
+function quotaPercentages(window) {
+  const directUsed = Number(window?.used_percent)
+  const directRemaining = Number(window?.remaining_percent)
+  const used = Number.isFinite(directUsed) && window?.used_percent !== null
+    ? Math.max(0, Math.min(100, directUsed))
+    : Number.isFinite(directRemaining) && window?.remaining_percent !== null
+      ? 100 - Math.max(0, Math.min(100, directRemaining))
+      : null
+  return { used, remaining: used === null ? null : 100 - used }
+}
+
+function tokenBand(value, t) {
+  const total = Number(value)
+  if (!Number.isFinite(total) || total < 0) return null
+  if (total < 10_000) return { key: 'green', label: t('bandLow') }
+  if (total < 50_000) return { key: 'blue', label: t('bandModerate') }
+  if (total < 100_000) return { key: 'yellow', label: t('bandElevated') }
+  if (total < 250_000) return { key: 'orange', label: t('bandHigh') }
+  return { key: 'red', label: t('bandExtreme') }
+}
+
+function formatDuration(value, active, t) {
+  if (active) return t('inProgress')
+  if (!Number.isInteger(value) || value < 0) return '—'
+  const days = Math.floor(value / 86400)
+  const hours = Math.floor(value % 86400 / 3600)
+  const minutes = Math.floor(value % 3600 / 60)
+  const seconds = value % 60
+  if (days) return t('durationDays', days, hours)
+  if (hours) return t('durationHours', hours, minutes)
+  if (minutes) return t('durationMinutes', minutes, seconds)
+  return t('durationSeconds', seconds)
+}
+
+function workloadLabel(row, t) {
+  const surface = t(`surface_${row.surface || row.source || 'other'}`)
+  const workload = row.workload_type && !['interactive', 'unknown'].includes(row.workload_type)
+    ? t(`workload_${row.workload_type}`)
+    : null
+  return [surface, workload, row.profile].filter(Boolean).join(' · ')
 }
 
 function useAccountSnapshot() {
@@ -97,13 +139,25 @@ function useHistory(days, selectedBucket) {
   })
 }
 
-function Progress({ percent }) {
-  const safe = Math.max(0, Math.min(100, Number(percent || 0)))
+function Progress({ quotaWindow }) {
+  const t = usePluginI18n(ID)
+  const quota = quotaPercentages(quotaWindow)
+  if (quota.used === null) return jsx('div', {
+    className: 'h-2 w-full border border-dashed border-(--ui-stroke-secondary)',
+    role: 'status',
+    children: t('usageUnavailable')
+  })
+  const visualWidth = quota.used > 0 && quota.used < 1 ? '2px' : `${quota.used}%`
   return jsx('div', {
-    className: 'h-1.5 w-full overflow-hidden rounded-full bg-(--ui-stroke-secondary)',
+    className: 'h-2 w-full overflow-hidden rounded-full bg-(--ui-stroke-secondary)',
+    role: 'progressbar',
+    'aria-label': `${quotaWindow.label}: ${quota.used}% ${t('usedWord')}`,
+    'aria-valuemin': 0,
+    'aria-valuemax': 100,
+    'aria-valuenow': quota.used,
     children: jsx('div', {
-      className: 'h-full rounded-full bg-(--ui-accent) transition-[width]',
-      style: { width: `${safe}%` }
+      className: `h-full rounded-full transition-[width] ${quota.used >= 90 ? 'bg-(--ui-danger)' : 'bg-(--ui-accent)'}`,
+      style: { width: visualWidth }
     })
   })
 }
@@ -114,7 +168,8 @@ function StatusChip() {
   const sessionQuery = useSessionUsage()
   const account = accountQuery.data?.account
   const quotaWindow = bindingWindow(account)
-  const remaining = quotaWindow ? `${Math.round(quotaWindow.remaining_percent)}%` : '—'
+  const quota = quotaPercentages(quotaWindow)
+  const remaining = quota.remaining === null ? '—' : `${Math.round(quota.remaining)}%`
   const tokens = sessionQuery.data?.total ? compactNumber(sessionQuery.data.total) : '0'
 
   return jsx(Tip, {
@@ -172,28 +227,33 @@ function AccountCard({ account }) {
       }),
       jsx('div', {
         className: 'mt-3 grid gap-3',
-        children: (account.windows || []).map((quotaWindow, index) => jsxs('div', {
-          className: 'grid gap-1',
-          children: [
+        children: (account.windows || []).map((quotaWindow, index) => {
+          const quota = quotaPercentages(quotaWindow)
+          return jsxs('div', {
+            className: 'grid gap-1',
+            children: [
             jsxs('div', {
               className: 'flex items-center justify-between text-sm',
               children: [
                 jsx('span', { children: quotaWindow.label }),
                 jsx('strong', {
-                  children: Number.isFinite(quotaWindow.remaining_percent)
-                    ? t('remaining', Math.round(quotaWindow.remaining_percent))
-                    : '—'
+                  children: quota.remaining === null
+                    ? t('usageUnavailable')
+                    : t('remaining', Math.round(quota.remaining))
                 })
               ]
             }),
-            jsx(Progress, { percent: quotaWindow.used_percent }),
+            jsx(Progress, { quotaWindow }),
             jsx('div', {
               className: 'text-xs text-(--ui-text-quaternary)',
-              children: quotaWindow.reset_at ? t('resets', formatDate(quotaWindow.reset_at)) : quotaWindow.detail || ''
+              children: quota.used === null
+                ? t('usageUnavailable')
+                : `${t('used', quota.used)}${quotaWindow.reset_at ? ` · ${t('resets', formatDate(quotaWindow.reset_at))}` : ''}`
             })
           ],
-          key: `${quotaWindow.label}-${index}`
-        }))
+            key: `${quotaWindow.label}-${index}`
+          })
+        })
       }),
       (account.details || []).length ? jsx('div', {
         className: 'mt-3 text-xs text-(--ui-text-tertiary)',
@@ -240,13 +300,28 @@ function SessionCard({ usage, sessionId }) {
 function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
   const t = usePluginI18n(ID)
   const points = history?.series?.points || []
-  const width = Math.max(720, points.length * 22 + 64)
+  const viewportRef = useRef(null)
+  const [viewportWidth, setViewportWidth] = useState(320)
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return undefined
+    const measure = () => setViewportWidth(Math.max(0, viewport.clientWidth || 0))
+    measure()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(measure)
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [])
+  const left = 40
+  const right = 16
+  const width = Math.max(viewportWidth, left + right + points.length * 10)
   const baseline = 182
   const chartHeight = 142
-  const step = (width - 64) / Math.max(1, points.length)
-  const barWidth = Math.max(4, Math.min(18, step * 0.68))
+  const step = (width - left - right) / Math.max(1, points.length)
+  const barWidth = Math.max(3, Math.min(18, step * 0.66))
   const maximum = Math.max(1, ...points.map(point => Number(point.total_tokens || 0)))
-  const labelStep = Math.max(1, Math.ceil(points.length / 7))
+  const periodCadence = days === 1 ? 4 : days === 7 ? 1 : days === 30 ? 5 : 14
+  const labelStep = Math.max(periodCadence, Math.ceil(72 / step))
   const colors = {
     input: 'var(--ui-accent)',
     output: 'var(--ui-text-secondary)',
@@ -291,7 +366,8 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
         ]
       }),
       points.length ? jsx('div', {
-        className: 'overflow-x-auto px-2 pt-1',
+        className: 'w-full overflow-x-auto overscroll-x-contain px-2 pt-1',
+        ref: viewportRef,
         children: jsxs('svg', {
           viewBox: `0 0 ${width} 220`,
           className: 'block h-[220px] max-w-none',
@@ -299,7 +375,9 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
           role: 'img',
           'aria-label': t('usageChart'),
           children: [
-            jsx('line', { x1: 32, y1: baseline, x2: width - 24, y2: baseline, stroke: 'var(--ui-stroke-secondary)' }),
+            jsx('line', { x1: left, y1: baseline, x2: width - right, y2: baseline, stroke: 'var(--ui-stroke-secondary)' }),
+            jsx('line', { x1: left, y1: baseline - chartHeight / 2, x2: width - right, y2: baseline - chartHeight / 2, stroke: 'var(--ui-stroke-secondary)', opacity: 0.45 }),
+            jsx('line', { x1: left, y1: baseline - chartHeight, x2: width - right, y2: baseline - chartHeight, stroke: 'var(--ui-stroke-secondary)', opacity: 0.45 }),
             ...points.map((point, index) => {
               const reasoning = Math.min(Number(point.reasoning_tokens || 0), Number(point.output_tokens || 0))
               const segments = [
@@ -309,7 +387,7 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
                 ['output', Math.max(0, Number(point.output_tokens || 0) - reasoning), 1],
                 ['reasoning', reasoning, 0.58]
               ]
-              const x = 32 + index * step + (step - barWidth) / 2
+              const x = left + index * step + (step - barWidth) / 2
               let y = baseline
               const rectangles = segments.map(([name, value, opacity]) => {
                 const segmentHeight = Math.max(0, value / maximum * chartHeight)
@@ -326,7 +404,7 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
                 }, name)
               })
               const label = formatBucket(point.bucket_start, history?.series?.bucket)
-              const tooltip = `${label} · ${compactNumber(point.total_tokens)} ${t('tokens')} · ${compactNumber(point.sessions)} ${t('sessions')}`
+              const tooltip = `${label} UTC · ${Number(point.total_tokens || 0).toLocaleString()} ${t('tokens')} · ${t('input')} ${compactNumber(point.input_tokens)} · ${t('output')} ${compactNumber(point.output_tokens)} · ${t('cacheRead')} ${compactNumber(point.cache_read_tokens)} · ${t('cacheWrite')} ${compactNumber(point.cache_write_tokens)} · ${t('reasoningSubset')} ${compactNumber(point.reasoning_tokens)} · ${compactNumber(point.sessions)} ${t('sessions')} · ${compactNumber(point.api_calls)} ${t('apiCalls')}`
               return jsxs('g', {
                 role: 'button',
                 tabIndex: 0,
@@ -344,12 +422,13 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
                     y: baseline + 22,
                     textAnchor: 'middle',
                     fill: 'var(--ui-text-quaternary)',
-                    fontSize: 9,
+                    fontSize: 11,
                     children: label
                   }) : null
                 ]
               }, point.bucket_start)
-            })
+            }),
+            jsx('text', { x: width - right, y: 216, textAnchor: 'end', fill: 'var(--ui-text-quaternary)', fontSize: 11, children: 'UTC' })
           ]
         })
       }) : jsx('p', { className: 'p-3 text-sm text-(--ui-text-tertiary)', children: t('noHistory') }),
@@ -404,30 +483,34 @@ function HistoryCard({ history, selectedBucket }) {
         ]
       }),
       visibleRows.length ? jsx('div', {
-        className: 'mt-3 overflow-auto',
+        className: 'mt-3',
         children: jsxs('div', {
-          className: 'min-w-[800px] text-xs',
+          className: 'text-xs',
           children: [
             jsxs('div', {
-              className: 'grid grid-cols-[140px_1fr_90px_120px_70px_80px] gap-2 border-b border-(--ui-stroke-secondary) pb-2 text-(--ui-text-tertiary)',
-              children: [t('when'), t('modelProvider'), t('source'), t('logsRef'), t('calls'), t('tokens')].map(label => jsx('span', { children: label, key: label }))
+              className: 'hidden grid-cols-[140px_140px_1fr_70px_110px_120px] gap-2 border-b border-(--ui-stroke-secondary) pb-2 text-(--ui-text-tertiary) md:grid',
+              children: [t('when'), t('workload'), t('modelProvider'), t('calls'), t('tokens'), t('logsRef')].map(label => jsx('span', { children: label, key: label }))
             }),
-            ...visibleRows.map((row, index) => jsxs('div', {
-              className: 'grid grid-cols-[140px_1fr_90px_120px_70px_80px] gap-2 border-b border-(--ui-stroke-secondary) py-2 last:border-0',
-              children: [
-                jsx('span', { children: formatDate(row.ended_at || row.started_at) }),
-                jsx('span', { className: 'truncate', children: `${row.model || 'unknown'} · ${row.provider || 'unknown'}` }),
-                jsx('span', { className: 'truncate text-(--ui-text-tertiary)', children: row.source || 'unknown' }),
-                jsx('code', { className: 'select-all text-(--ui-text-secondary)', children: row.session_ref || '—' }),
-                jsx('span', { className: 'text-right tabular-nums', children: compactNumber(row.api_call_count) }),
-                jsx('span', {
-                  className: 'text-right tabular-nums',
-                  title: `${t('input')} ${compactNumber(row.input_tokens)} · ${t('output')} ${compactNumber(row.output_tokens)} · ${t('cacheRead')} ${compactNumber(row.cache_read_tokens)} · ${t('cacheWrite')} ${compactNumber(row.cache_write_tokens)}`,
-                  children: compactNumber(row.total_tokens)
-                })
-              ],
-              key: row.session_ref || `${row.ended_at || row.started_at || 'session'}-${index}`
-            }))
+            ...visibleRows.map((row, index) => {
+              const band = tokenBand(row.total_tokens, t)
+              return jsxs('div', {
+                className: 'grid grid-cols-2 gap-2 border-b border-(--ui-stroke-secondary) py-3 last:border-0 md:grid-cols-[140px_140px_1fr_70px_110px_120px]',
+                children: [
+                  jsxs('span', { children: [formatDate(row.ended_at || row.started_at), jsx('small', { className: 'block text-(--ui-text-tertiary)', children: formatDuration(row.duration_seconds, row.is_active, t) })] }),
+                  jsx('span', { className: 'truncate text-(--ui-text-tertiary)', children: workloadLabel(row, t) }),
+                  jsx('span', { className: 'truncate', title: `${row.model || 'unknown'} · ${row.provider || 'unknown'}`, children: `${row.model || 'unknown'} · ${row.provider || 'unknown'}` }),
+                  jsx('span', { className: 'text-right tabular-nums', children: compactNumber(row.api_call_count) }),
+                  jsx('span', {
+                    className: `text-right tabular-nums aum-band-${band?.key || 'none'}`,
+                    title: `${t('input')} ${compactNumber(row.input_tokens)} · ${t('output')} ${compactNumber(row.output_tokens)} · ${t('cacheRead')} ${compactNumber(row.cache_read_tokens)} · ${t('cacheWrite')} ${compactNumber(row.cache_write_tokens)}`,
+                    'aria-label': band ? `${Number(row.total_tokens).toLocaleString()} ${t('tokens')}, ${band.label}` : t('usageUnavailable'),
+                    children: band ? `${compactNumber(row.total_tokens)} · ${band.label}` : '—'
+                  }),
+                  jsx('code', { className: 'select-all text-(--ui-text-secondary)', children: row.session_ref || '—' })
+                ],
+                key: row.session_ref || `${row.ended_at || row.started_at || 'session'}-${index}`
+              })
+            })
           ]
         })
       }) : jsx('p', { className: 'mt-3 text-sm text-(--ui-text-tertiary)', children: t('noHistory') })
@@ -522,8 +605,11 @@ export default {
         chartHint: 'UTC buckets · select a bar to isolate its sessions below.',
         logsRef: 'Log ref',
         quotaUnavailable: 'Account quota is unavailable for this provider.',
+        usageUnavailable: 'Usage unavailable',
         codexCaveat: 'This is the Codex allowance attached to your ChatGPT subscription, not a universal percentage for ordinary ChatGPT conversations.',
         remaining: value => `${value}% remaining`,
+        used: value => `${value}% used`,
+        usedWord: 'used',
         resets: value => `Resets ${value}`,
         input: 'Input tokens',
         output: 'Output tokens',
@@ -536,12 +622,23 @@ export default {
         noActiveSession: 'No active session',
         noHistory: 'No recorded usage in this period.',
         when: 'When',
+        workload: 'Workload',
         modelProvider: 'Model · provider',
         source: 'Surface',
         calls: 'Calls',
         periodTotals: (tokens, calls) => `Period total: ${tokens} tok · ${calls} calls`,
         sessions: 'sessions',
         tokens: 'Tokens',
+        bandLow: 'Low', bandModerate: 'Moderate', bandElevated: 'Elevated',
+        bandHigh: 'High', bandExtreme: 'Extreme', inProgress: 'In progress',
+        durationDays: (days, hours) => `${days}d ${String(hours).padStart(2, '0')}h`,
+        durationHours: (hours, minutes) => `${hours}h ${String(minutes).padStart(2, '0')}m`,
+        durationMinutes: (minutes, seconds) => `${minutes}m ${String(seconds).padStart(2, '0')}s`,
+        durationSeconds: seconds => `${seconds}s`,
+        surface_cron: 'Cron', surface_desktop: 'Desktop', surface_cli: 'CLI',
+        surface_tui: 'TUI', surface_acp: 'ACP', surface_gateway: 'Gateway', surface_other: 'Other',
+        workload_scheduled: 'Scheduled', workload_subagent: 'Subagent',
+        workload_branch: 'Branch', workload_continuation: 'Continuation',
         refresh: 'Refresh',
         refreshing: 'Refreshing…',
         loadError: 'Usage data could not be loaded. Refresh or restart the Hermes backend.',
@@ -562,8 +659,11 @@ export default {
         chartHint: 'Créneaux UTC · sélectionne une barre pour isoler ses sessions ci-dessous.',
         logsRef: 'Réf. logs',
         quotaUnavailable: 'Le quota du compte n’est pas disponible pour ce fournisseur.',
+        usageUnavailable: 'Consommation indisponible',
         codexCaveat: 'Il s’agit du quota Codex rattaché à ton abonnement ChatGPT, pas d’un pourcentage universel pour les conversations ChatGPT ordinaires.',
         remaining: value => `${value} % restants`,
+        used: value => `${value} % utilisés`,
+        usedWord: 'utilisés',
         resets: value => `Réinitialisation ${value}`,
         input: 'Tokens en entrée',
         output: 'Tokens en sortie',
@@ -576,12 +676,23 @@ export default {
         noActiveSession: 'Aucune session active',
         noHistory: 'Aucune consommation enregistrée sur cette période.',
         when: 'Date',
+        workload: 'Charge',
         modelProvider: 'Modèle · fournisseur',
         source: 'Surface',
         calls: 'Appels',
         periodTotals: (tokens, calls) => `Total de la période : ${tokens} tok · ${calls} appels`,
         sessions: 'sessions',
         tokens: 'Tokens',
+        bandLow: 'Faible', bandModerate: 'Modérée', bandElevated: 'Soutenue',
+        bandHigh: 'Élevée', bandExtreme: 'Extrême', inProgress: 'En cours',
+        durationDays: (days, hours) => `${days} j ${String(hours).padStart(2, '0')} h`,
+        durationHours: (hours, minutes) => `${hours} h ${String(minutes).padStart(2, '0')} min`,
+        durationMinutes: (minutes, seconds) => `${minutes} min ${String(seconds).padStart(2, '0')} s`,
+        durationSeconds: seconds => `${seconds} s`,
+        surface_cron: 'Cron', surface_desktop: 'Desktop', surface_cli: 'CLI',
+        surface_tui: 'TUI', surface_acp: 'ACP', surface_gateway: 'Passerelle', surface_other: 'Autre',
+        workload_scheduled: 'Planifiée', workload_subagent: 'Sous-agent',
+        workload_branch: 'Branche', workload_continuation: 'Continuation',
         refresh: 'Actualiser',
         refreshing: 'Actualisation…',
         loadError: 'Les données de consommation n’ont pas pu être chargées. Actualise ou redémarre le backend Hermes.',
