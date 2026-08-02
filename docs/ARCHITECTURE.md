@@ -25,6 +25,9 @@ The backend:
 - uses session completion time (`ended_at`, falling back to `started_at`) consistently
   for totals, chart buckets, and bucket-specific session queries;
 - serves bounded bucket-specific rows with explicit count/truncation metadata;
+- detects optional session columns by name and derives only exact allowlisted surface and
+  workload enums, a strict ASCII profile slug, and validated duration/active state;
+- never selects session titles, paths, prompts, chat identifiers, or raw lineage values;
 - derives a collision-aware session suffix and removes the complete identifier before
   serialization;
 - returns generic failures while logging only exception classes.
@@ -35,6 +38,8 @@ The backend:
 `window.__HERMES_PLUGIN_SDK__.fetchJSON`, which preserves host authentication and
 profile scope. React elements render all provider/database strings as text. The bundle
 does not import third-party code or access cookies/storage.
+Its chart measures the local viewport with `ResizeObserver`, fills available width, retains
+all UTC buckets, and introduces horizontal scrolling only at a 10-pixel bucket step.
 
 ### Hermes Desktop
 
