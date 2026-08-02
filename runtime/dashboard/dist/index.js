@@ -23,6 +23,7 @@
         refreshing: "Actualisation…",
         account: "Quota du compte",
         unavailable: "Le fournisseur ne publie pas de quota de compte exploitable.",
+        usageUnavailable: "Consommation indisponible",
         remaining: "restants",
         used: "utilisés",
         reset: "Réinitialisation",
@@ -48,7 +49,16 @@
         date: "Date",
         model: "Modèle · fournisseur",
         surface: "Surface",
+        workload: "Charge",
         tokens: "Tokens",
+        inProgress: "En cours",
+        durationDays: function (days, hours) { return days + " j " + String(hours).padStart(2, "0") + " h"; },
+        durationHours: function (hours, minutes) { return hours + " h " + String(minutes).padStart(2, "0") + " min"; },
+        durationMinutes: function (minutes, seconds) { return minutes + " min " + String(seconds).padStart(2, "0") + " s"; },
+        durationSeconds: function (seconds) { return seconds + " s"; },
+        bands: { green: "Faible", blue: "Modérée", yellow: "Soutenue", orange: "Élevée", red: "Extrême" },
+        surfaces: { cron: "Cron", desktop: "Desktop", cli: "CLI", tui: "TUI", acp: "ACP", gateway: "Passerelle", other: "Autre" },
+        workloads: { scheduled: "Planifiée", subagent: "Sous-agent", branch: "Branche", continuation: "Continuation" },
         empty: "Aucune consommation enregistrée sur cette période.",
         loading: "Chargement de la consommation…",
         error: "Impossible de charger les données de consommation. Réessaie dans quelques secondes.",
@@ -64,6 +74,7 @@
       refreshing: "Refreshing…",
       account: "Account quota",
       unavailable: "The provider does not publish a usable account quota.",
+      usageUnavailable: "Usage unavailable",
       remaining: "remaining",
       used: "used",
       reset: "Resets",
@@ -89,7 +100,16 @@
       date: "Date",
       model: "Model · provider",
       surface: "Surface",
+      workload: "Workload",
       tokens: "Tokens",
+      inProgress: "In progress",
+      durationDays: function (days, hours) { return days + "d " + String(hours).padStart(2, "0") + "h"; },
+      durationHours: function (hours, minutes) { return hours + "h " + String(minutes).padStart(2, "0") + "m"; },
+      durationMinutes: function (minutes, seconds) { return minutes + "m " + String(seconds).padStart(2, "0") + "s"; },
+      durationSeconds: function (seconds) { return seconds + "s"; },
+      bands: { green: "Low", blue: "Moderate", yellow: "Elevated", orange: "High", red: "Extreme" },
+      surfaces: { cron: "Cron", desktop: "Desktop", cli: "CLI", tui: "TUI", acp: "ACP", gateway: "Gateway", other: "Other" },
+      workloads: { scheduled: "Scheduled", subagent: "Subagent", branch: "Branch", continuation: "Continuation" },
       empty: "No usage was recorded in this period.",
       loading: "Loading usage data…",
       error: "Usage data could not be loaded. Try again in a few seconds.",
@@ -128,11 +148,50 @@
 
   function bindingWindow(account) {
     const windows = (account && account.windows || []).filter(function (window) {
-      return Number.isFinite(window.remaining_percent);
+      return quotaPercentages(window).used !== null;
     });
     return windows.length ? windows.reduce(function (lowest, current) {
-      return current.remaining_percent < lowest.remaining_percent ? current : lowest;
+      return quotaPercentages(current).remaining < quotaPercentages(lowest).remaining ? current : lowest;
     }) : null;
+  }
+
+  function quotaPercentages(window) {
+    const usedValue = Number(window && window.used_percent);
+    const remainingValue = Number(window && window.remaining_percent);
+    const used = window && window.used_percent !== null && Number.isFinite(usedValue)
+      ? Math.max(0, Math.min(100, usedValue))
+      : window && window.remaining_percent !== null && Number.isFinite(remainingValue)
+        ? 100 - Math.max(0, Math.min(100, remainingValue))
+        : null;
+    return { used: used, remaining: used === null ? null : 100 - used };
+  }
+
+  function tokenBand(value, t) {
+    const total = Number(value);
+    if (!Number.isFinite(total) || total < 0) return null;
+    const key = total < 10000 ? "green" : total < 50000 ? "blue" : total < 100000 ? "yellow" : total < 250000 ? "orange" : "red";
+    return { key: key, label: t.bands[key] };
+  }
+
+  function formatDuration(value, active, t) {
+    if (active) return t.inProgress;
+    if (!Number.isInteger(value) || value < 0) return "—";
+    const days = Math.floor(value / 86400);
+    const hours = Math.floor(value % 86400 / 3600);
+    const minutes = Math.floor(value % 3600 / 60);
+    const seconds = value % 60;
+    if (days) return t.durationDays(days, hours);
+    if (hours) return t.durationHours(hours, minutes);
+    if (minutes) return t.durationMinutes(minutes, seconds);
+    return t.durationSeconds(seconds);
+  }
+
+  function workloadLabel(row, t) {
+    const surface = t.surfaces[row.surface || row.source] || t.surfaces.other;
+    const workload = row.workload_type && !["interactive", "unknown"].includes(row.workload_type)
+      ? t.workloads[row.workload_type]
+      : null;
+    return [surface, workload, row.profile].filter(Boolean).join(" · ");
   }
 
   function Stat(props) {
@@ -156,17 +215,25 @@
       h("h2", { className: "aum-card-title" }, t.account),
       h("p", { className: "aum-card-meta" }, account.provider + (account.plan ? " · " + account.plan : "")),
       h("div", { className: "aum-window-list" }, (account.windows || []).map(function (window, index) {
-        const used = Math.max(0, Math.min(100, Number(window.used_percent || 0)));
+        const quota = quotaPercentages(window);
+        const visualWidth = quota.used > 0 && quota.used < 1 ? "2px" : quota.used + "%";
         return h("div", { className: "aum-window", key: window.label + "-" + index },
           h("div", { className: "aum-window-head" },
             h("span", null, window.label),
-            h("span", { className: "aum-window-value" }, Math.round(window.remaining_percent) + "% " + t.remaining)
+            h("span", { className: "aum-window-value" }, quota.remaining === null ? t.usageUnavailable : Math.round(quota.remaining) + "% " + t.remaining)
           ),
-          h("div", { className: "aum-progress" },
-            h("div", { className: "aum-progress-fill", style: { width: used + "%" } })
-          ),
+          quota.used === null
+            ? h("div", { className: "aum-progress is-unavailable", role: "status" }, t.usageUnavailable)
+            : h("div", {
+                className: "aum-progress" + (quota.used >= 90 ? " is-danger" : ""),
+                role: "progressbar",
+                "aria-label": window.label + ": " + quota.used + "% " + t.used,
+                "aria-valuemin": 0,
+                "aria-valuemax": 100,
+                "aria-valuenow": quota.used
+              }, h("div", { className: "aum-progress-fill", style: { width: visualWidth } })),
           h("div", { className: "aum-window-foot" },
-            Math.round(used) + "% " + t.used + (window.reset_at ? " · " + t.reset + " " + formatDate(window.reset_at) : "")
+            quota.used === null ? t.usageUnavailable : quota.used + "% " + t.used + (window.reset_at ? " · " + t.reset + " " + formatDate(window.reset_at) : "")
           )
         );
       })),
@@ -202,14 +269,31 @@
     const series = history.series || {};
     const points = series.points || [];
     const t = props.t;
-    const width = Math.max(720, points.length * 22 + 64);
+    const viewportRef = React.useRef(null);
+    const widthState = React.useState(320);
+    const viewportWidth = widthState[0];
+    const setViewportWidth = widthState[1];
+    React.useEffect(function () {
+      const viewport = viewportRef.current;
+      if (!viewport) return undefined;
+      const measure = function () { setViewportWidth(Math.max(0, viewport.clientWidth || 0)); };
+      measure();
+      if (typeof ResizeObserver === "undefined") return undefined;
+      const observer = new ResizeObserver(measure);
+      observer.observe(viewport);
+      return function () { observer.disconnect(); };
+    }, []);
+    const left = 40;
+    const right = 16;
+    const width = Math.max(viewportWidth, left + right + points.length * 10);
     const height = 220;
     const baseline = 182;
     const chartHeight = 142;
-    const step = (width - 64) / Math.max(1, points.length);
-    const barWidth = Math.max(4, Math.min(18, step * 0.68));
+    const step = (width - left - right) / Math.max(1, points.length);
+    const barWidth = Math.max(3, Math.min(18, step * 0.66));
     const maximum = Math.max(1, ...points.map(function (point) { return Number(point.total_tokens || 0); }));
-    const labelStep = Math.max(1, Math.ceil(points.length / 7));
+    const periodCadence = props.days === 1 ? 4 : props.days === 7 ? 1 : props.days === 30 ? 5 : 14;
+    const labelStep = Math.max(periodCadence, Math.ceil(72 / step));
     const legends = [
       ["input", t.inputLegend],
       ["output", t.outputLegend],
@@ -233,15 +317,17 @@
           }, days === 1 ? "24h" : days + "d");
         }))
       ),
-      points.length ? h("div", { className: "aum-chart-scroll" },
+      points.length ? h("div", { className: "aum-chart-scroll", ref: viewportRef },
         h("svg", {
           className: "aum-chart",
           viewBox: "0 0 " + width + " " + height,
           style: { width: width + "px" },
-          role: "img",
+          role: "group",
           "aria-label": t.chart
         },
-          h("line", { className: "aum-chart-axis", x1: 32, y1: baseline, x2: width - 24, y2: baseline }),
+          h("line", { className: "aum-chart-axis", x1: left, y1: baseline, x2: width - right, y2: baseline }),
+          h("line", { className: "aum-chart-axis", x1: left, y1: baseline - chartHeight / 2, x2: width - right, y2: baseline - chartHeight / 2 }),
+          h("line", { className: "aum-chart-axis", x1: left, y1: baseline - chartHeight, x2: width - right, y2: baseline - chartHeight }),
           points.map(function (point, index) {
             const reasoning = Math.min(Number(point.reasoning_tokens || 0), Number(point.output_tokens || 0));
             const segments = [
@@ -251,7 +337,7 @@
               ["output", Math.max(0, Number(point.output_tokens || 0) - reasoning)],
               ["reasoning", reasoning]
             ];
-            const x = 32 + index * step + (step - barWidth) / 2;
+            const x = left + index * step + (step - barWidth) / 2;
             let y = baseline;
             const rectangles = segments.map(function (segment) {
               const segmentHeight = Math.max(0, segment[1] / maximum * chartHeight);
@@ -266,16 +352,24 @@
               });
             });
             const label = formatBucket(point.bucket_start, series.bucket);
-            const tooltip = label + " · " + compact(point.total_tokens) + " " + t.tokens
-              + " · " + compact(point.sessions) + " " + t.sessions;
+            const tooltip = label + " UTC · " + Number(point.total_tokens || 0).toLocaleString() + " " + t.tokens
+              + " · " + t.inputLegend + " " + compact(point.input_tokens)
+              + " · " + t.outputLegend + " " + compact(point.output_tokens)
+              + " · " + t.cacheReadLegend + " " + compact(point.cache_read_tokens)
+              + " · " + t.cacheWriteLegend + " " + compact(point.cache_write_tokens)
+              + " · " + t.reasoningLegend + " " + compact(point.reasoning_tokens)
+              + " · " + compact(point.sessions) + " " + t.sessions
+              + " · " + compact(point.api_calls) + " " + t.calls;
             const selected = props.selectedBucket === Number(point.bucket_start);
             return h("g", {
               className: "aum-chart-bar" + (selected ? " is-selected" : ""),
               role: "button",
               tabIndex: 0,
               "aria-label": tooltip,
+              "aria-pressed": selected,
               onClick: function () { props.onSelect(Number(point.bucket_start)); },
               onKeyDown: function (event) {
+                if (event.key === " ") event.preventDefault();
                 if (event.key === "Enter" || event.key === " ") props.onSelect(Number(point.bucket_start));
               },
               key: point.bucket_start
@@ -286,7 +380,8 @@
                 ? h("text", { className: "aum-chart-label", x: x + barWidth / 2, y: baseline + 22, textAnchor: "middle" }, label)
                 : null
             );
-          })
+          }),
+          h("text", { className: "aum-chart-label", x: width - right, y: 216, textAnchor: "end" }, "UTC")
         )
       ) : h("div", { className: "aum-empty" }, t.empty),
       h("div", { className: "aum-chart-legend" }, legends.map(function (legend) {
@@ -324,25 +419,31 @@
         h("table", { className: "aum-table" },
           h("thead", null, h("tr", null,
             h("th", null, t.date),
+            h("th", null, t.workload),
             h("th", null, t.model),
-            h("th", null, t.surface),
-            h("th", null, t.logRef),
             h("th", { className: "aum-num" }, t.calls),
-            h("th", { className: "aum-num" }, t.tokens)
+            h("th", { className: "aum-num" }, t.tokens),
+            h("th", null, t.logRef)
           )),
           h("tbody", null, visibleRows.map(function (row, index) {
+            const band = tokenBand(row.total_tokens, t);
             const tokenDetail = t.inputLegend + " " + compact(row.input_tokens)
               + " · " + t.outputLegend + " " + compact(row.output_tokens)
               + " · " + t.cacheReadLegend + " " + compact(row.cache_read_tokens)
               + " · " + t.cacheWriteLegend + " " + compact(row.cache_write_tokens)
               + (row.reasoning_tokens ? " · " + t.reasoningLegend + " " + compact(row.reasoning_tokens) : "");
             return h("tr", { key: row.session_ref || (row.ended_at || row.started_at || "session") + "-" + index },
-              h("td", null, formatDate(row.ended_at || row.started_at)),
-              h("td", { className: "aum-model" }, (row.model || "unknown") + " · " + (row.provider || "unknown")),
-              h("td", { className: "aum-muted" }, row.source || "unknown"),
-              h("td", null, row.session_ref ? h("code", { className: "aum-session-ref", title: t.logRef }, row.session_ref) : "—"),
-              h("td", { className: "aum-num" }, compact(row.api_call_count)),
-              h("td", { className: "aum-num", title: tokenDetail }, compact(row.total_tokens))
+              h("td", { "data-label": t.date }, formatDate(row.ended_at || row.started_at), h("small", { className: "aum-duration" }, formatDuration(row.duration_seconds, row.is_active, t))),
+              h("td", { className: "aum-muted", "data-label": t.workload }, workloadLabel(row, t)),
+              h("td", { className: "aum-model", "data-label": t.model }, (row.model || "unknown") + " · " + (row.provider || "unknown")),
+              h("td", { className: "aum-num", "data-label": t.calls }, compact(row.api_call_count)),
+              h("td", {
+                className: "aum-num aum-band-" + (band ? band.key : "none"),
+                title: tokenDetail,
+                "aria-label": band ? Number(row.total_tokens).toLocaleString() + " " + t.tokens + ", " + band.label : t.usageUnavailable,
+                "data-label": t.tokens
+              }, band ? compact(row.total_tokens) + " · " + band.label : "—"),
+              h("td", { "data-label": t.logRef }, row.session_ref ? h("code", { className: "aum-session-ref", title: t.logRef }, row.session_ref) : "—")
             );
           }))
         )
@@ -398,6 +499,7 @@
     }
 
     const binding = bindingWindow(data.account);
+    const bindingQuota = quotaPercentages(binding);
     return h("div", { className: "aum-page" },
       h("header", { className: "aum-hero" },
         h("div", null,
@@ -406,7 +508,7 @@
           h("p", { className: "aum-subtitle" }, t.subtitle)
         ),
         h("div", { className: "aum-hero-actions" },
-          h("div", { className: "aum-binding" }, binding ? Math.round(binding.remaining_percent) + "% " + t.remaining : "—"),
+          h("div", { className: "aum-binding" }, bindingQuota.remaining === null ? "—" : Math.round(bindingQuota.remaining) + "% " + t.remaining),
           h("button", {
             type: "button",
             className: "aum-button",

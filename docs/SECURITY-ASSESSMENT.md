@@ -1,13 +1,17 @@
 # Security Assessment
 
-Assessment date: 2026-07-24
+Assessment date: 2026-08-02
 
 ## Executive summary
 
-The reviewed 0.3 codebase has a deliberately narrow read-only design and no plugin
+The reviewed 0.4 codebase has a deliberately narrow read-only design and no plugin
 runtime dependencies. No credential, prompt-content, SQL-injection, DOM-XSS, or state
 mutation path was identified after hardening. Automated controls cannot prove absence
 of vulnerabilities; changes touching trust boundaries require human review.
+
+Version 0.4 additionally replaces arbitrary session source display with exact enums,
+derives lineage categories without serializing marker values, validates profile slugs and
+durations, and tolerates older schemas with fail-closed optional-field fallbacks.
 
 ## Findings remediated before public release
 
@@ -47,6 +51,8 @@ The plugin never pools such results under a shared fallback scope.
 - account cache is profile-scoped;
 - route query bounds reject invalid periods and limits;
 - session references remain unique in each response and complete IDs are absent;
+- raw title/source/path/chat/lineage values are absent while safe session enums, profile,
+  duration, and active state retain a stable response shape;
 - frontend bundles avoid raw HTML, eval, storage, direct fetch, cookies, and custom auth;
 - source and automation are covered by CI, static analysis, dependency audit, secret scan,
   CodeQL, dependency review, workflow analysis, and OpenSSF Scorecard.

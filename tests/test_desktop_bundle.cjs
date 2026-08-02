@@ -14,17 +14,18 @@ const SIDEBAR_NAV_AREA = 'sidebar';
 const STATUSBAR_AREAS = { right: 'status-right' };
 const Tip = function Tip() {};
 const usePluginI18n = () => (key, ...args) => {
-  const value = globalThis.__i18n && globalThis.__i18n.en && globalThis.__i18n.en[key];
+  const locale = globalThis.__locale || 'en';
+  const value = globalThis.__i18n && globalThis.__i18n[locale] && globalThis.__i18n[locale][key];
   return typeof value === 'function' ? value(...args) : value || key;
 };
 const useQuery = options => {
   const key = options.queryKey || [];
-  if (key.includes('account')) return { data: { account: { available: false } }, refetch: () => {} };
+  if (key.includes('account')) return { data: { account: { available: true, provider: 'openai-codex', windows: [{ label: 'Session', used_percent: null, remaining_percent: 35 }] } }, refetch: () => {} };
   if (key.includes('session')) return { data: { input: 1, output: 2, total: 3 }, refetch: () => {} };
   if (key.includes('history')) return { data: { history: {
     totals: { total_tokens: 170, api_calls: 3 },
     series: { bucket: 'day', bucket_seconds: 86400, points: [{ bucket_start: 1784851200, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }] },
-    rows: [{ started_at: 1784900000, model: 'gpt-test', provider: 'openai-codex', source: 'desktop', api_call_count: 3, total_tokens: 170, session_ref: 'abcd12345678' }]
+    rows: [{ started_at: 1784900000, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, total_tokens: 120000, session_ref: 'abcd12345678' }]
   } }, refetch: () => {} };
   return { data: null, refetch: () => {} };
 };
@@ -35,11 +36,18 @@ const useState = initial => {
   if (stateCall === 2) return [1784851200, () => {}];
   return [initial, () => {}];
 };
+const useRef = initial => ({ current: initial });
+const useEffect = () => {};
 const jsx = (type, props) => ({ type, props });
 const jsxs = jsx;
 ` + source.slice(bodyStart + 2);
 source = source.replace('export default {', 'globalThis.__plugin = {');
 if (!source.includes('bucket_start=')) throw new Error('Desktop bucket-specific history request missing');
+if (!source.includes('ResizeObserver')) throw new Error('Desktop chart is not container-aware');
+if (!source.includes("role: 'progressbar'")) throw new Error('Desktop quota progress semantics missing');
+for (const threshold of ['10_000', '50_000', '100_000', '250_000']) {
+  if (!source.includes(threshold)) throw new Error('Desktop token-band threshold missing: ' + threshold);
+}
 const sandbox = { globalThis: {}, Intl, Number, Date, Math, Promise, console };
 vm.runInNewContext(source, sandbox);
 const plugin = sandbox.globalThis.__plugin;
@@ -61,12 +69,55 @@ function flatten(node) {
   if (typeof node.type === 'function') return flatten(node.type(node.props || {}));
   return flatten(node.props && node.props.children);
 }
+function findAll(node, predicate, matches = []) {
+  if (node === null || node === undefined || node === false) return matches;
+  if (Array.isArray(node)) {
+    for (const child of node) findAll(child, predicate, matches);
+    return matches;
+  }
+  if (typeof node !== 'object') return matches;
+  if (typeof node.type === 'function') return findAll(node.type(node.props || {}), predicate, matches);
+  if (predicate(node)) matches.push(node);
+  findAll(node.props && node.props.children, predicate, matches);
+  return matches;
+}
+function resolveTree(node) {
+  if (node === null || node === undefined || node === false) return node;
+  if (Array.isArray(node)) return node.map(resolveTree);
+  if (typeof node !== 'object') return node;
+  if (typeof node.type === 'function') return resolveTree(node.type(node.props || {}));
+  return {
+    ...node,
+    props: { ...(node.props || {}), children: resolveTree(node.props && node.props.children) }
+  };
+}
 const page = (contributions || []).find(item => item.id === 'page');
-const rendered = flatten(page.render());
+const tree = resolveTree(page.render());
+const rendered = flatten(tree);
 if (!rendered.includes('Token usage')) throw new Error('Desktop usage chart missing: ' + rendered);
 if (!rendered.includes('Selected bucket sessions')) throw new Error('Desktop selected-bucket subtitle missing: ' + rendered);
 if (!rendered.includes('Period total: 170 tok · 3 calls')) throw new Error('Desktop period totals scope missing: ' + rendered);
 if (!rendered.includes('Log ref')) throw new Error('Desktop log reference label missing: ' + rendered);
 if (!rendered.includes('abcd12345678')) throw new Error('Desktop log reference missing: ' + rendered);
+if (!rendered.includes('65% used')) throw new Error('Desktop remaining-percent fallback missing: ' + rendered);
+if (!rendered.includes('High')) throw new Error('Desktop visible token band missing: ' + rendered);
+if (!rendered.includes('CLI · Subagent · security')) throw new Error('Desktop safe workload context missing: ' + rendered);
+if (!rendered.includes('2m 05s')) throw new Error('Desktop duration missing: ' + rendered);
+const chart = findAll(tree, node => node.type === 'svg')[0];
+if (!chart || chart.props.role !== 'group' || !chart.props['aria-label']) throw new Error('Desktop chart is not a labelled accessible group');
+const chartBar = findAll(chart, node => node.type === 'g' && node.props.role === 'button')[0];
+if (!chartBar || chartBar.props['aria-pressed'] !== true) throw new Error('Desktop chart bar selected state missing');
+let spacePrevented = false;
+chartBar.props.onKeyDown({ key: ' ', preventDefault: () => { spacePrevented = true; } });
+if (!spacePrevented) throw new Error('Desktop chart Space handler did not prevent page scrolling');
+const mobileLabels = findAll(tree, node => node.type === 'span' && String(node.props.className || '').includes('md:hidden')).map(flatten);
+for (const label of ['When', 'Workload', 'Model · provider', 'Calls', 'Tokens', 'Log ref']) {
+  if (!mobileLabels.includes(label)) throw new Error('Desktop mobile field label missing: ' + label);
+}
+const bandValues = findAll(tree, node => node.type === 'span' && node.props && node.props['data-token-band']);
+if (!bandValues.length || bandValues[0].props.style.color !== 'var(--ui-text-primary)') throw new Error('Desktop token-band text is not theme-safe');
+sandbox.globalThis.__locale = 'fr';
+const frenchRendered = flatten(page.render());
+if (!frenchRendered.includes('2 min 05 s')) throw new Error('French Desktop duration was not localized: ' + frenchRendered);
 if (rendered.includes('1970')) throw new Error('Desktop Unix seconds were rendered as milliseconds: ' + rendered);
 console.log('desktop bundle smoke: ok');

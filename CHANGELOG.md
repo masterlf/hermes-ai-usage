@@ -5,6 +5,29 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-02
+
+### Added
+
+- Container-aware UTC token charts that retain every returned bucket and scroll only
+  below a 10-pixel minimum bucket step.
+- Privacy-safe session surface, workload type, strict profile slug, duration, and active
+  state, with no raw title, custom source, path, chat metadata, or complete identifiers.
+- Five deterministic, localized token-consumption bands with visible text labels and
+  responsive Desktop/Web session history.
+
+### Fixed
+
+- Quota progress now derives finite used percentage from remaining percentage when needed,
+  distinguishes unavailable data from zero, and exposes accessible progress semantics.
+
+### Security
+
+- Raw session source is replaced by an exact allowlisted enum; the compatibility `source`
+  field is now only an alias of that safe enum.
+- Optional session schema fields are detected by name and fail closed to bounded null,
+  `other`, or `unknown` values.
+
 ## [0.3.0] - 2026-07-24
 
 ### Added
@@ -38,6 +61,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only provider-quota snapshots and seven-day token history.
 - French and English UI text.
 
-[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.4.0
 [0.3.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.3.0
 [0.2.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.2.1

@@ -6,6 +6,7 @@ Hermes provider adapters; this module never returns tokens, keys, or raw prompts
 from __future__ import annotations
 
 import logging
+import math
 import re
 import sqlite3
 import threading
@@ -29,6 +30,7 @@ _ACCOUNT_CACHE_TTL_SECONDS = 45.0
 _account_cache: dict[tuple[str, str], tuple[float, AccountUsageSnapshot | None]] = {}
 _account_cache_lock = threading.Lock()
 _SAFE_PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_SAFE_PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SAFE_SESSION_REF_RE = re.compile(r"^[A-Za-z0-9._-]{12,20}$")
 _SESSION_REF_WIDTHS = (12, 16, 20)
 _TOTAL_TOKEN_FIELDS = (
@@ -38,6 +40,28 @@ _TOTAL_TOKEN_FIELDS = (
     "cache_write_tokens",
 )
 _TOKEN_FIELDS = (*_TOTAL_TOKEN_FIELDS, "reasoning_tokens")
+_MAX_SESSION_DURATION_SECONDS = 365 * 86400
+_REQUIRED_SESSION_COLUMNS = frozenset(
+    {
+        "id", "source", "model", "billing_provider", "started_at", "ended_at",
+        "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
+        "reasoning_tokens", "api_call_count",
+    }
+)
+_SURFACE_ALIASES = {
+    "cron": "cron",
+    "desktop": "desktop",
+    "cli": "cli",
+    "tui": "tui",
+    "acp": "acp",
+    "gateway": "gateway",
+    "telegram": "gateway",
+    "discord": "gateway",
+    "slack": "gateway",
+    "whatsapp": "gateway",
+    "signal": "gateway",
+    "matrix": "gateway",
+}
 
 
 def _utc_now_iso() -> str:
@@ -70,6 +94,60 @@ def _safe_text(value: Any, max_length: int = 160) -> str | None:
 def _safe_provider(value: Any) -> str:
     provider = str(value or "").strip().lower()
     return provider if _SAFE_PROVIDER_RE.fullmatch(provider) else ""
+
+
+def _safe_profile(value: Any) -> str | None:
+    if value is None:
+        return None
+    profile = unicodedata.normalize("NFKC", str(value)).strip()
+    return profile if _SAFE_PROFILE_RE.fullmatch(profile) else None
+
+
+def _safe_surface(value: Any) -> str:
+    return _SURFACE_ALIASES.get(str(value or "").strip().lower(), "other")
+
+
+def _session_timing(started_at: Any, ended_at: Any, now: float) -> tuple[int | None, bool]:
+    if (
+        not isinstance(started_at, (int, float))
+        or isinstance(started_at, bool)
+        or not math.isfinite(started_at)
+        or started_at > now
+    ):
+        return None, False
+    active = ended_at is None
+    end = now if active else ended_at
+    if (
+        not isinstance(end, (int, float))
+        or isinstance(end, bool)
+        or not math.isfinite(end)
+        or end < started_at
+    ):
+        return None, False
+    duration = math.floor(end - started_at)
+    if duration > _MAX_SESSION_DURATION_SECONDS:
+        return None, False
+    return duration, active
+
+
+def _workload_type(
+    surface: str,
+    delegate: Any,
+    branch: Any,
+    continuation: Any,
+    has_parent: Any,
+) -> str:
+    if surface == "cron":
+        return "scheduled"
+    if bool(delegate):
+        return "subagent"
+    if bool(branch):
+        return "branch"
+    if bool(continuation):
+        return "continuation"
+    if not bool(has_parent) and surface in {"desktop", "cli", "tui", "acp", "gateway"}:
+        return "interactive"
+    return "unknown"
 
 
 def _configured_provider() -> str:
@@ -251,6 +329,98 @@ def _normalise_token_counts(record: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def _history_rows_query(columns: set[str]) -> str:
+    profile = (
+        "s.profile_name AS profile_raw"
+        if "profile_name" in columns
+        else "NULL AS profile_raw"
+    )
+    has_parent = (
+        "CASE WHEN s.parent_session_id IS NULL THEN 0 ELSE 1 END AS has_parent"
+        if "parent_session_id" in columns
+        else "0 AS has_parent"
+    )
+    can_join_parent = {"parent_session_id", "end_reason"}.issubset(columns)
+    stable_branch = """json_valid(s.model_config)
+            AND json_type(s.model_config, '$._branched_from') NOT IN ('null')"""
+    legacy_branch = """parent.end_reason = 'branched'
+            AND s.started_at >= parent.ended_at"""
+    if "model_config" in columns:
+        delegate = """CASE WHEN json_valid(s.model_config)
+            AND json_type(s.model_config, '$._delegate_from') NOT IN ('null')
+            THEN 1 ELSE 0 END AS is_delegate"""
+    else:
+        delegate = "0 AS is_delegate"
+    branch_conditions = []
+    if "model_config" in columns:
+        branch_conditions.append(stable_branch)
+    if can_join_parent:
+        branch_conditions.append(legacy_branch)
+    branch = (
+        "CASE WHEN " + " OR ".join(f"({condition})" for condition in branch_conditions)
+        + " THEN 1 ELSE 0 END AS is_branch"
+        if branch_conditions
+        else "0 AS is_branch"
+    )
+    continuation = (
+        "CASE WHEN parent.end_reason = 'compression' THEN 1 ELSE 0 END AS is_continuation"
+        if can_join_parent
+        else "0 AS is_continuation"
+    )
+    parent_join = (
+        "LEFT JOIN sessions AS parent ON parent.id = s.parent_session_id"
+        if can_join_parent
+        else ""
+    )
+    # Every interpolated fragment above is selected from source-code constants only;
+    # database values and request values remain bound parameters.
+    query = """
+        SELECT
+            s.id,
+            s.source AS source_raw,
+            s.model,
+            s.billing_provider,
+            s.started_at,
+            s.ended_at,
+            COALESCE(s.input_tokens, 0) AS input_tokens,
+            COALESCE(s.output_tokens, 0) AS output_tokens,
+            COALESCE(s.cache_read_tokens, 0) AS cache_read_tokens,
+            COALESCE(s.cache_write_tokens, 0) AS cache_write_tokens,
+            COALESCE(s.reasoning_tokens, 0) AS reasoning_tokens,
+            COALESCE(s.api_call_count, 0) AS api_call_count,
+            __PROFILE__,
+            __HAS_PARENT__,
+            __DELEGATE__,
+            __BRANCH__,
+            __CONTINUATION__
+        FROM sessions AS s
+        __PARENT_JOIN__
+        WHERE COALESCE(s.ended_at, s.started_at) >= ?
+          AND COALESCE(s.ended_at, s.started_at) <= ?
+          AND (
+              MAX(COALESCE(s.input_tokens, 0), 0) + MAX(COALESCE(s.output_tokens, 0), 0)
+              + MAX(COALESCE(s.cache_read_tokens, 0), 0)
+              + MAX(COALESCE(s.cache_write_tokens, 0), 0)
+          ) > 0
+          AND (
+              ? IS NULL OR (
+                  COALESCE(s.ended_at, s.started_at) >= ?
+                  AND COALESCE(s.ended_at, s.started_at) < ?
+              )
+          )
+        ORDER BY COALESCE(s.ended_at, s.started_at) DESC
+        LIMIT ?
+    """
+    return (
+        query.replace("__PROFILE__", profile)
+        .replace("__HAS_PARENT__", has_parent)
+        .replace("__DELEGATE__", delegate)
+        .replace("__BRANCH__", branch)
+        .replace("__CONTINUATION__", continuation)
+        .replace("__PARENT_JOIN__", parent_join)
+    )
+
+
 def _token_history(days: int, limit: int, bucket_start: int | None = None) -> dict[str, Any]:
     db_path = Path(get_hermes_home()) / "state.db"
     now = time.time()
@@ -276,37 +446,7 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
             "totals": {},
             "series": _history_series_shape(days),
         }
-    query = """
-        SELECT
-            id,
-            source,
-            model,
-            billing_provider,
-            started_at,
-            ended_at,
-            COALESCE(input_tokens, 0) AS input_tokens,
-            COALESCE(output_tokens, 0) AS output_tokens,
-            COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
-            COALESCE(cache_write_tokens, 0) AS cache_write_tokens,
-            COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
-            COALESCE(api_call_count, 0) AS api_call_count
-        FROM sessions
-        WHERE COALESCE(ended_at, started_at) >= ?
-          AND COALESCE(ended_at, started_at) <= ?
-          AND (
-              MAX(COALESCE(input_tokens, 0), 0) + MAX(COALESCE(output_tokens, 0), 0)
-              + MAX(COALESCE(cache_read_tokens, 0), 0)
-              + MAX(COALESCE(cache_write_tokens, 0), 0)
-          ) > 0
-          AND (
-              ? IS NULL OR (
-                  COALESCE(ended_at, started_at) >= ?
-                  AND COALESCE(ended_at, started_at) < ?
-              )
-          )
-        ORDER BY COALESCE(ended_at, started_at) DESC
-        LIMIT ?
-    """
+
     aggregate_query = """
         SELECT
             COUNT(*) AS sessions,
@@ -381,6 +521,10 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
     connection: sqlite3.Connection | None = None
     try:
         connection = _readonly_connection(db_path)
+        columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(sessions)")}
+        if not _REQUIRED_SESSION_COLUMNS.issubset(columns):
+            raise sqlite3.OperationalError("unsupported sessions schema")
+        query = _history_rows_query(columns)
         raw_rows = [
             dict(row)
             for row in connection.execute(
@@ -464,11 +608,28 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
     for row in raw_rows:
         session_id = str(row.pop("id", "") or "")
         provider = _safe_provider(row.pop("billing_provider", None)) or "unknown"
+        surface = _safe_surface(row.pop("source_raw", None))
+        profile = _safe_profile(row.pop("profile_raw", None))
+        workload_type = _workload_type(
+            surface,
+            row.pop("is_delegate", 0),
+            row.pop("is_branch", 0),
+            row.pop("is_continuation", 0),
+            row.pop("has_parent", 0),
+        )
+        duration_seconds, is_active = _session_timing(
+            row.get("started_at"), row.get("ended_at"), now
+        )
         row["api_call_count"] = _nonnegative_int(row.get("api_call_count"))
         _normalise_token_counts(row)
         item = {
             **row,
-            "source": _safe_text(row.get("source"), 80) or "unknown",
+            "surface": surface,
+            "source": surface,
+            "workload_type": workload_type,
+            "profile": profile,
+            "duration_seconds": duration_seconds,
+            "is_active": is_active,
             "model": _safe_text(row.get("model"), 160) or "unknown",
             "provider": provider,
             "session_ref": references.get(session_id),

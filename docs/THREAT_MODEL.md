@@ -42,6 +42,11 @@
 | Browser credential leakage | host SDK clients only; no custom Authorization/cookies/storage/direct fetch |
 | Query DoS | bounded `days` and `limit`; short SQLite timeout; provider cache |
 | Session correlation leakage | complete IDs removed before serialization; bounded collision-aware suffix; authenticated host surfaces only |
+| Confidential source/title semantics | exact surface enum; raw source/title never serialized; complete-payload regressions |
+| Lineage leakage/misclassification | category-only marker checks; branch/compression distinction; fail closed to `unknown` |
+| Profile disclosure/injection | strict bounded ASCII slug or null; no path/chat/profile fallback |
+| Corrupt timestamps | finite, ordered, non-future values; 365-day ceiling; invalid values become null/inactive |
+| Session schema drift | name-based optional-column detection and hardcoded SQL fragments with stable fallbacks |
 | Supply-chain compromise | no runtime dependencies; hashed dev lock; pinned Actions; Dependabot; review gates |
 | Secret committed to Git | local and CI Gitleaks; GitHub secret scanning and push protection |
 
@@ -56,7 +61,7 @@
 ## Residual risks
 
 - Provider APIs can change semantics without notice; values remain labelled by source.
-- Session/model/surface metadata can itself be sensitive in some organisations. Access
+- Session/model/surface/workload/profile/timing metadata can itself be sensitive in some organisations. Access
   should be limited to trusted Dashboard users.
 - Short session references remain searchable identifiers while source logs are retained;
   they are minimised but not anonymous.

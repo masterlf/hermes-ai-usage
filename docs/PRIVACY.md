@@ -11,12 +11,15 @@ From Hermes provider adapters:
 
 From the active Hermes profile's `sessions` table:
 
-- surface/source;
+- raw source transiently, only to map it to an exact allowlisted `surface` enum;
+- lineage marker presence as booleans, only to derive a bounded `workload_type` enum;
+- strict profile slug, when valid;
 - model and billing provider;
 - start/end timestamps;
 - input, output, cache-read, cache-write, and reasoning counters;
 - API-call count;
 - the session identifier only transiently, to derive a bounded log-searchable suffix.
+- validated duration and active state derived from bounded timestamps.
 
 ## Data deliberately not read or returned
 
@@ -24,6 +27,8 @@ From the active Hermes profile's `sessions` table:
 - provider API keys, OAuth tokens, cookies, or auth headers;
 - complete internal session identifiers;
 - local filesystem paths or raw database/provider exceptions;
+- session titles, arbitrary/custom source labels, cron names/prompts, subagent goals,
+  parent/lineage identifiers, profile fallbacks, chat/user/thread identifiers, or origin JSON;
 - configuration values other than the active provider identifier;
 - cost fields that are not displayed by the current product.
 
@@ -58,3 +63,5 @@ arbitrary outbound URL feature.
 Usage metadata can reveal models, activity timing, and interaction surfaces. Treat the
 Dashboard as sensitive operational tooling, enforce Hermes authentication, restrict
 network exposure, and provide access only to users authorised for the active profile.
+Safe enums, profile names, timestamps, token volume, and suffix references remain
+correlatable operational metadata; they are minimised, not anonymised.

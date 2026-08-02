@@ -15,7 +15,7 @@ const snapshot = {
     available: true,
     provider: 'openai-codex',
     plan: 'Pro',
-    windows: [{ label: 'Session', used_percent: 14, remaining_percent: 86, reset_at: '2026-07-29T01:07:13Z' }],
+    windows: [{ label: 'Session', used_percent: null, remaining_percent: 35, reset_at: '2026-07-29T01:07:13Z' }],
     details: []
   }
 };
@@ -28,7 +28,7 @@ const history = {
       bucket_seconds: 86400,
       points: [{ bucket_start: 1784851200, sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }]
     },
-    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', source: 'desktop', api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170, session_ref: 'abcd12345678' }]
+    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }]
   }
 };
 const React = {
@@ -50,7 +50,7 @@ const React = {
     return states[index];
   },
   useCallback: fn => fn,
-  useEffect: fn => { effect = fn; }
+  useEffect: fn => { if (String(fn).includes('load(false)')) effect = fn; }
 };
 const sandbox = {
   window: {
@@ -92,6 +92,7 @@ const sandbox = {
   },
   document: { documentElement: { lang: 'fr' } },
   navigator: { language: 'fr-FR' },
+  ResizeObserver: class ResizeObserver { observe() {} disconnect() {} },
   Intl, Number, Promise, Object, String, Math, console
 };
 
@@ -136,15 +137,47 @@ function render() {
   return registered.component();
 }
 
+function contrastRatio(foreground, background) {
+  const luminance = color => {
+    const channels = color.slice(1).match(/.{2}/g).map(channel => parseInt(channel, 16) / 255);
+    const linear = channels.map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+  };
+  const lighter = Math.max(luminance(foreground), luminance(background));
+  const darker = Math.min(luminance(foreground), luminance(background));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 (async () => {
   vm.runInNewContext(fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8'), sandbox);
+  const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
+  const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
+  if (!dashboardSource.includes('ResizeObserver')) throw new Error('dashboard chart is not container-aware');
+  if (!dashboardSource.includes('role: "progressbar"')) throw new Error('dashboard quota progress semantics missing');
+  if (dashboardStyles.includes('prefers-color-scheme')) throw new Error('token bands must follow the dashboard theme, not the OS theme');
+  const sharedBandRule = dashboardStyles.match(/\.aum-band-green,[^{]+\{([^}]*)\}/);
+  if (!sharedBandRule || !sharedBandRule[1].includes('color: var(--color-foreground)')) {
+    throw new Error('dashboard token-band text does not use the contrast-safe theme foreground');
+  }
+  if (contrastRatio('#ffe6cb', '#041c1c') < 4.5) {
+    throw new Error('Hermes default dashboard foreground does not meet WCAG AA contrast');
+  }
+  for (const band of ['green', 'blue', 'yellow', 'orange', 'red']) {
+    if (!dashboardStyles.includes('.aum-band-' + band + ' { --aum-band-marker: var(--')) {
+      throw new Error('dashboard theme marker missing for token band: ' + band);
+    }
+  }
+  for (const threshold of ['10000', '50000', '100000', '250000']) {
+    if (!dashboardSource.includes(threshold)) throw new Error('dashboard token-band threshold missing: ' + threshold);
+  }
   if (!registered || registered.name !== 'ai-usage-monitor') throw new Error('dashboard plugin did not register');
   render();
   if (!effect) throw new Error('dashboard effect was not registered');
   effect();
   await new Promise(resolve => setImmediate(resolve));
   const rendered = flatten(render());
-  if (!rendered.includes('86% restants')) throw new Error('provider quota was not rendered');
+  if (!rendered.includes('35% restants')) throw new Error('provider quota fallback was not rendered');
+  if (!rendered.includes('65% utilisés')) throw new Error('provider used fallback was not rendered');
   if (!rendered.includes('gpt-test')) throw new Error('history row was not rendered: ' + rendered);
   if (!rendered.includes('Utilisation des tokens')) throw new Error('usage chart was not rendered: ' + rendered);
   const periodButtons = findAll(render(), node => node.type === 'button' && node.props && typeof node.props.onClick === 'function');
@@ -161,16 +194,33 @@ function render() {
   if (!thirtyDayLoaded.includes('Activité Hermes · 30 jours')) throw new Error('web totals scope did not follow loaded thirty-day data: ' + thirtyDayLoaded);
   if (!thirtyDayLoaded.includes('thirty-day-model')) throw new Error('thirty-day history response was not rendered: ' + thirtyDayLoaded);
   if (!rendered.includes('abcd12345678')) throw new Error('log reference was not rendered: ' + rendered);
+  if (!rendered.includes('Élevée')) throw new Error('visible token band was not rendered: ' + rendered);
+  if (!rendered.includes('CLI · Sous-agent · security')) throw new Error('safe workload context was not rendered: ' + rendered);
+  if (!rendered.includes('2 min 05 s')) throw new Error('session duration was not rendered: ' + rendered);
+  sandbox.document.documentElement.lang = 'en';
+  const englishRendered = flatten(render());
+  if (!englishRendered.includes('2m 05s')) throw new Error('English session duration was not localized: ' + englishRendered);
+  sandbox.document.documentElement.lang = 'fr';
   if (rendered.includes('1970')) throw new Error('Unix seconds were rendered as milliseconds: ' + rendered);
-  const chartBar = findFirst(render(), node => node.type === 'g' && node.props && node.props.role === 'button');
+  const chart = findFirst(render(), node => node.type === 'svg' && node.props && node.props.role === 'group');
+  if (!chart) throw new Error('chart was not exposed as a labelled group');
+  if (!chart.props['aria-label']) throw new Error('chart group is not labelled');
+  const chartBar = findFirst(chart, node => node.type === 'g' && node.props && node.props.role === 'button');
   if (!chartBar) throw new Error('interactive chart bar was not rendered');
+  if (chartBar.props['aria-pressed'] !== false) throw new Error('unselected chart bar state was not exposed');
+  let spacePrevented = false;
   holdNextUnfiltered = true;
   effect();
   await new Promise(resolve => setImmediate(resolve));
   if (!resolveStaleHistory) throw new Error('stale history request was not held');
-  chartBar.props.onClick();
+  chartBar.props.onKeyDown({ key: ' ', preventDefault: () => { spacePrevented = true; } });
+  if (!spacePrevented) throw new Error('Space on a chart bar did not prevent page scrolling');
   const filtered = flatten(render());
   if (!filtered.includes('Sessions du créneau sélectionné')) throw new Error('chart selection did not filter history: ' + filtered);
+  const selectedChartBar = findFirst(render(), node => node.type === 'g' && node.props && node.props.role === 'button');
+  if (!selectedChartBar || selectedChartBar.props['aria-pressed'] !== true) throw new Error('selected chart bar state was not exposed');
+  const modelCell = findFirst(render(), node => node.type === 'td' && node.props && node.props.className === 'aum-model');
+  if (!modelCell || modelCell.props['data-label'] !== 'Modèle · fournisseur') throw new Error('mobile model/provider field label missing');
   effect();
   await new Promise(resolve => setImmediate(resolve));
   const selected = flatten(render());

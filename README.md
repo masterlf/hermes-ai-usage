@@ -23,8 +23,10 @@ It never reads prompt or message content.
 - Desktop status-bar indicator and detailed page;
 - Web Dashboard tab at `/ai-usage`;
 - active-session token and context counters in Hermes Desktop;
-- selectable 24-hour, 7-day, 30-day, and 90-day token chart with hourly/daily buckets;
-- session history with provider, model, surface, calls, token categories, and a short
+- selectable 24-hour, 7-day, 30-day, and 90-day container-aware UTC chart that retains
+  every returned hourly/daily bucket and scrolls only when buckets reach their minimum width;
+- session history with provider, model, safe surface/workload enums, strict profile slug,
+  validated duration/active state, calls, five visible token-consumption bands, and a short
   reference that can be searched in retained Hermes logs;
 - French and English UI;
 - no independent credential handling, browser storage, analytics, or third-party scripts.
@@ -49,6 +51,8 @@ Key controls:
 - SQLite URI `mode=ro` plus `PRAGMA query_only=ON`;
 - static parameterized SQL; no mutation statements;
 - response allowlisting and bounded display strings;
+- exact session-surface enums and fail-closed optional-schema handling; raw source, title,
+  paths, chat metadata, and lineage identifiers are never returned;
 - no complete session identifiers, prompt content, messages, tool payloads, or raw
   exception text; only bounded log-searchable session suffixes are returned;
 - no `innerHTML`, `eval`, browser storage, custom auth headers, or direct browser `fetch`;
@@ -115,7 +119,8 @@ Hermes mounts the router under `/api/plugins/ai-usage-monitor`:
 - `GET /health`
 - `GET /snapshot?provider=auto`
 - `GET /history?days=7&limit=200&bucket_start=<UTC epoch>` (`days` is bounded to
-  1–90; `bucket_start` is optional and must match a returned UTC bucket)
+  1–90; `bucket_start` is optional and must be a UTC bucket boundary within the
+  requested range, with the immediately preceding bucket also accepted as clock grace)
 
 Hermes Dashboard authentication protects these routes. The plugin does not create
 another auth mechanism and should not be exposed independently. `session_ref` is a
@@ -123,6 +128,10 @@ another auth mechanism and should not be exposed independently. `session_ref` is
 searched in local Hermes logs only while the corresponding logs are retained.
 Bucket-specific results remain capped at 200 rows and expose `row_count` plus
 `rows_truncated` so the UI never implies that a partial list is complete.
+History rows expose `surface`, `workload_type`, `profile`, `duration_seconds`, and
+`is_active`. The legacy `source` field is only an alias of the safe `surface` enum.
+Token bands are fixed by total tokens: Low below 10k, Moderate below 50k, Elevated below
+100k, High below 250k, and Extreme at 250k or above; visible labels accompany color.
 
 ## Roadmap
 
