@@ -137,11 +137,36 @@ function render() {
   return registered.component();
 }
 
+function contrastRatio(foreground, background) {
+  const luminance = color => {
+    const channels = color.slice(1).match(/.{2}/g).map(channel => parseInt(channel, 16) / 255);
+    const linear = channels.map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+  };
+  const lighter = Math.max(luminance(foreground), luminance(background));
+  const darker = Math.min(luminance(foreground), luminance(background));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 (async () => {
   vm.runInNewContext(fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8'), sandbox);
   const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
+  const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
   if (!dashboardSource.includes('ResizeObserver')) throw new Error('dashboard chart is not container-aware');
   if (!dashboardSource.includes('role: "progressbar"')) throw new Error('dashboard quota progress semantics missing');
+  if (dashboardStyles.includes('prefers-color-scheme')) throw new Error('token bands must follow the dashboard theme, not the OS theme');
+  const sharedBandRule = dashboardStyles.match(/\.aum-band-green,[^{]+\{([^}]*)\}/);
+  if (!sharedBandRule || !sharedBandRule[1].includes('color: var(--color-foreground)')) {
+    throw new Error('dashboard token-band text does not use the contrast-safe theme foreground');
+  }
+  if (contrastRatio('#ffe6cb', '#041c1c') < 4.5) {
+    throw new Error('Hermes default dashboard foreground does not meet WCAG AA contrast');
+  }
+  for (const band of ['green', 'blue', 'yellow', 'orange', 'red']) {
+    if (!dashboardStyles.includes('.aum-band-' + band + ' { --aum-band-marker: var(--')) {
+      throw new Error('dashboard theme marker missing for token band: ' + band);
+    }
+  }
   for (const threshold of ['10000', '50000', '100000', '250000']) {
     if (!dashboardSource.includes(threshold)) throw new Error('dashboard token-band threshold missing: ' + threshold);
   }
@@ -177,15 +202,25 @@ function render() {
   if (!englishRendered.includes('2m 05s')) throw new Error('English session duration was not localized: ' + englishRendered);
   sandbox.document.documentElement.lang = 'fr';
   if (rendered.includes('1970')) throw new Error('Unix seconds were rendered as milliseconds: ' + rendered);
-  const chartBar = findFirst(render(), node => node.type === 'g' && node.props && node.props.role === 'button');
+  const chart = findFirst(render(), node => node.type === 'svg' && node.props && node.props.role === 'group');
+  if (!chart) throw new Error('chart was not exposed as a labelled group');
+  if (!chart.props['aria-label']) throw new Error('chart group is not labelled');
+  const chartBar = findFirst(chart, node => node.type === 'g' && node.props && node.props.role === 'button');
   if (!chartBar) throw new Error('interactive chart bar was not rendered');
+  if (chartBar.props['aria-pressed'] !== false) throw new Error('unselected chart bar state was not exposed');
+  let spacePrevented = false;
   holdNextUnfiltered = true;
   effect();
   await new Promise(resolve => setImmediate(resolve));
   if (!resolveStaleHistory) throw new Error('stale history request was not held');
-  chartBar.props.onClick();
+  chartBar.props.onKeyDown({ key: ' ', preventDefault: () => { spacePrevented = true; } });
+  if (!spacePrevented) throw new Error('Space on a chart bar did not prevent page scrolling');
   const filtered = flatten(render());
   if (!filtered.includes('Sessions du créneau sélectionné')) throw new Error('chart selection did not filter history: ' + filtered);
+  const selectedChartBar = findFirst(render(), node => node.type === 'g' && node.props && node.props.role === 'button');
+  if (!selectedChartBar || selectedChartBar.props['aria-pressed'] !== true) throw new Error('selected chart bar state was not exposed');
+  const modelCell = findFirst(render(), node => node.type === 'td' && node.props && node.props.className === 'aum-model');
+  if (!modelCell || modelCell.props['data-label'] !== 'Modèle · fournisseur') throw new Error('mobile model/provider field label missing');
   effect();
   await new Promise(resolve => setImmediate(resolve));
   const selected = flatten(render());

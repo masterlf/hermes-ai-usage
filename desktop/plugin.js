@@ -85,6 +85,21 @@ function tokenBand(value, t) {
   return { key: 'red', label: t('bandExtreme') }
 }
 
+function tokenBandStyle(key) {
+  const markers = {
+    green: 'var(--ui-accent)',
+    blue: 'var(--ui-accent-secondary)',
+    yellow: 'var(--ui-text-secondary)',
+    orange: 'var(--ui-warm)',
+    red: 'var(--ui-red)'
+  }
+  return {
+    color: 'var(--ui-text-primary)',
+    borderInlineStart: `3px solid ${markers[key] || 'var(--ui-stroke-secondary)'}`,
+    paddingInlineStart: '0.45rem'
+  }
+}
+
 function formatDuration(value, active, t) {
   if (active) return t('inProgress')
   if (!Number.isInteger(value) || value < 0) return '—'
@@ -372,7 +387,7 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
           viewBox: `0 0 ${width} 220`,
           className: 'block h-[220px] max-w-none',
           style: { width: `${width}px` },
-          role: 'img',
+          role: 'group',
           'aria-label': t('usageChart'),
           children: [
             jsx('line', { x1: left, y1: baseline, x2: width - right, y2: baseline, stroke: 'var(--ui-stroke-secondary)' }),
@@ -410,8 +425,10 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
                 tabIndex: 0,
                 className: 'cursor-pointer opacity-80 hover:opacity-100 focus:opacity-100',
                 'aria-label': tooltip,
+                'aria-pressed': selectedBucket === Number(point.bucket_start),
                 onClick: () => onSelect(Number(point.bucket_start)),
                 onKeyDown: event => {
+                  if (event.key === ' ') event.preventDefault()
                   if (event.key === 'Enter' || event.key === ' ') onSelect(Number(point.bucket_start))
                 },
                 children: [
@@ -493,20 +510,26 @@ function HistoryCard({ history, selectedBucket }) {
             }),
             ...visibleRows.map((row, index) => {
               const band = tokenBand(row.total_tokens, t)
+              const mobileLabel = label => jsx('span', {
+                className: 'mb-1 block text-[0.65rem] uppercase tracking-wide text-(--ui-text-tertiary) md:hidden',
+                children: label
+              })
               return jsxs('div', {
                 className: 'grid grid-cols-2 gap-2 border-b border-(--ui-stroke-secondary) py-3 last:border-0 md:grid-cols-[140px_140px_1fr_70px_110px_120px]',
                 children: [
-                  jsxs('span', { children: [formatDate(row.ended_at || row.started_at), jsx('small', { className: 'block text-(--ui-text-tertiary)', children: formatDuration(row.duration_seconds, row.is_active, t) })] }),
-                  jsx('span', { className: 'truncate text-(--ui-text-tertiary)', children: workloadLabel(row, t) }),
-                  jsx('span', { className: 'truncate', title: `${row.model || 'unknown'} · ${row.provider || 'unknown'}`, children: `${row.model || 'unknown'} · ${row.provider || 'unknown'}` }),
-                  jsx('span', { className: 'text-right tabular-nums', children: compactNumber(row.api_call_count) }),
-                  jsx('span', {
-                    className: `text-right tabular-nums aum-band-${band?.key || 'none'}`,
+                  jsxs('span', { children: [mobileLabel(t('when')), formatDate(row.ended_at || row.started_at), jsx('small', { className: 'block text-(--ui-text-tertiary)', children: formatDuration(row.duration_seconds, row.is_active, t) })] }),
+                  jsxs('span', { className: 'truncate text-(--ui-text-tertiary)', children: [mobileLabel(t('workload')), workloadLabel(row, t)] }),
+                  jsxs('span', { className: 'truncate', title: `${row.model || 'unknown'} · ${row.provider || 'unknown'}`, children: [mobileLabel(t('modelProvider')), `${row.model || 'unknown'} · ${row.provider || 'unknown'}`] }),
+                  jsxs('span', { className: 'text-right tabular-nums', children: [mobileLabel(t('calls')), compactNumber(row.api_call_count)] }),
+                  jsxs('span', {
+                    className: 'text-right tabular-nums',
+                    'data-token-band': band?.key || 'none',
+                    style: tokenBandStyle(band?.key),
                     title: `${t('input')} ${compactNumber(row.input_tokens)} · ${t('output')} ${compactNumber(row.output_tokens)} · ${t('cacheRead')} ${compactNumber(row.cache_read_tokens)} · ${t('cacheWrite')} ${compactNumber(row.cache_write_tokens)}`,
                     'aria-label': band ? `${Number(row.total_tokens).toLocaleString()} ${t('tokens')}, ${band.label}` : t('usageUnavailable'),
-                    children: band ? `${compactNumber(row.total_tokens)} · ${band.label}` : '—'
+                    children: [mobileLabel(t('tokens')), band ? `${compactNumber(row.total_tokens)} · ${band.label}` : '—']
                   }),
-                  jsx('code', { className: 'select-all text-(--ui-text-secondary)', children: row.session_ref || '—' })
+                  jsxs('span', { children: [mobileLabel(t('logsRef')), jsx('code', { className: 'select-all text-(--ui-text-secondary)', children: row.session_ref || '—' })] })
                 ],
                 key: row.session_ref || `${row.ended_at || row.started_at || 'session'}-${index}`
               })

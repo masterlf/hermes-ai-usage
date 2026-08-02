@@ -69,8 +69,31 @@ function flatten(node) {
   if (typeof node.type === 'function') return flatten(node.type(node.props || {}));
   return flatten(node.props && node.props.children);
 }
+function findAll(node, predicate, matches = []) {
+  if (node === null || node === undefined || node === false) return matches;
+  if (Array.isArray(node)) {
+    for (const child of node) findAll(child, predicate, matches);
+    return matches;
+  }
+  if (typeof node !== 'object') return matches;
+  if (typeof node.type === 'function') return findAll(node.type(node.props || {}), predicate, matches);
+  if (predicate(node)) matches.push(node);
+  findAll(node.props && node.props.children, predicate, matches);
+  return matches;
+}
+function resolveTree(node) {
+  if (node === null || node === undefined || node === false) return node;
+  if (Array.isArray(node)) return node.map(resolveTree);
+  if (typeof node !== 'object') return node;
+  if (typeof node.type === 'function') return resolveTree(node.type(node.props || {}));
+  return {
+    ...node,
+    props: { ...(node.props || {}), children: resolveTree(node.props && node.props.children) }
+  };
+}
 const page = (contributions || []).find(item => item.id === 'page');
-const rendered = flatten(page.render());
+const tree = resolveTree(page.render());
+const rendered = flatten(tree);
 if (!rendered.includes('Token usage')) throw new Error('Desktop usage chart missing: ' + rendered);
 if (!rendered.includes('Selected bucket sessions')) throw new Error('Desktop selected-bucket subtitle missing: ' + rendered);
 if (!rendered.includes('Period total: 170 tok · 3 calls')) throw new Error('Desktop period totals scope missing: ' + rendered);
@@ -80,6 +103,19 @@ if (!rendered.includes('65% used')) throw new Error('Desktop remaining-percent f
 if (!rendered.includes('High')) throw new Error('Desktop visible token band missing: ' + rendered);
 if (!rendered.includes('CLI · Subagent · security')) throw new Error('Desktop safe workload context missing: ' + rendered);
 if (!rendered.includes('2m 05s')) throw new Error('Desktop duration missing: ' + rendered);
+const chart = findAll(tree, node => node.type === 'svg')[0];
+if (!chart || chart.props.role !== 'group' || !chart.props['aria-label']) throw new Error('Desktop chart is not a labelled accessible group');
+const chartBar = findAll(chart, node => node.type === 'g' && node.props.role === 'button')[0];
+if (!chartBar || chartBar.props['aria-pressed'] !== true) throw new Error('Desktop chart bar selected state missing');
+let spacePrevented = false;
+chartBar.props.onKeyDown({ key: ' ', preventDefault: () => { spacePrevented = true; } });
+if (!spacePrevented) throw new Error('Desktop chart Space handler did not prevent page scrolling');
+const mobileLabels = findAll(tree, node => node.type === 'span' && String(node.props.className || '').includes('md:hidden')).map(flatten);
+for (const label of ['When', 'Workload', 'Model · provider', 'Calls', 'Tokens', 'Log ref']) {
+  if (!mobileLabels.includes(label)) throw new Error('Desktop mobile field label missing: ' + label);
+}
+const bandValues = findAll(tree, node => node.type === 'span' && node.props && node.props['data-token-band']);
+if (!bandValues.length || bandValues[0].props.style.color !== 'var(--ui-text-primary)') throw new Error('Desktop token-band text is not theme-safe');
 sandbox.globalThis.__locale = 'fr';
 const frenchRendered = flatten(page.render());
 if (!frenchRendered.includes('2 min 05 s')) throw new Error('French Desktop duration was not localized: ' + frenchRendered);

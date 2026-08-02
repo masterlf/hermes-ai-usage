@@ -119,7 +119,8 @@ Hermes mounts the router under `/api/plugins/ai-usage-monitor`:
 - `GET /health`
 - `GET /snapshot?provider=auto`
 - `GET /history?days=7&limit=200&bucket_start=<UTC epoch>` (`days` is bounded to
-  1–90; `bucket_start` is optional and must match a returned UTC bucket)
+  1–90; `bucket_start` is optional and must be a UTC bucket boundary within the
+  requested range, with the immediately preceding bucket also accepted as clock grace)
 
 Hermes Dashboard authentication protects these routes. The plugin does not create
 another auth mechanism and should not be exposed independently. `session_ref` is a

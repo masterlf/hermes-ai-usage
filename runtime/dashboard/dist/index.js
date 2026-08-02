@@ -322,7 +322,7 @@
           className: "aum-chart",
           viewBox: "0 0 " + width + " " + height,
           style: { width: width + "px" },
-          role: "img",
+          role: "group",
           "aria-label": t.chart
         },
           h("line", { className: "aum-chart-axis", x1: left, y1: baseline, x2: width - right, y2: baseline }),
@@ -366,8 +366,10 @@
               role: "button",
               tabIndex: 0,
               "aria-label": tooltip,
+              "aria-pressed": selected,
               onClick: function () { props.onSelect(Number(point.bucket_start)); },
               onKeyDown: function (event) {
+                if (event.key === " ") event.preventDefault();
                 if (event.key === "Enter" || event.key === " ") props.onSelect(Number(point.bucket_start));
               },
               key: point.bucket_start
@@ -433,7 +435,7 @@
             return h("tr", { key: row.session_ref || (row.ended_at || row.started_at || "session") + "-" + index },
               h("td", { "data-label": t.date }, formatDate(row.ended_at || row.started_at), h("small", { className: "aum-duration" }, formatDuration(row.duration_seconds, row.is_active, t))),
               h("td", { className: "aum-muted", "data-label": t.workload }, workloadLabel(row, t)),
-              h("td", { className: "aum-model" }, (row.model || "unknown") + " · " + (row.provider || "unknown")),
+              h("td", { className: "aum-model", "data-label": t.model }, (row.model || "unknown") + " · " + (row.provider || "unknown")),
               h("td", { className: "aum-num", "data-label": t.calls }, compact(row.api_call_count)),
               h("td", {
                 className: "aum-num aum-band-" + (band ? band.key : "none"),
