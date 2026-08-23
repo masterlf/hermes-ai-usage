@@ -28,7 +28,11 @@ const history = {
     series: {
       bucket: 'day',
       bucket_seconds: 86400,
-      points: [{ bucket_start: 1784851200, sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }]
+      points: [
+        { bucket_start: 1784851200, sessions: 2, api_calls: 3, input_tokens: 12345, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 12415 },
+        { bucket_start: 1784937600, sessions: 1, api_calls: 1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 99990, cache_write_tokens: 1, reasoning_tokens: 2, total_tokens: 100006 },
+        { bucket_start: 1785024000, sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 }
+      ]
     },
     rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }]
   }
@@ -93,7 +97,7 @@ const sandbox = {
     clearInterval: () => {}
   },
   document: { documentElement: { lang: 'fr' } },
-  navigator: { language: 'fr-FR' },
+  navigator: { language: 'en-US' },
   ResizeObserver: class ResizeObserver { observe() {} disconnect() {} },
   Intl, Number, Promise, Object, String, Math, console
 };
@@ -171,6 +175,19 @@ function contrastRatio(foreground, background) {
   if (zero.additiveTotal !== 0 || zero.shareTenths.some(value => value !== 0) || zero.reasoningOutputTenths !== 0) throw new Error('dashboard zero composition is not finite');
   const tiny = compositionOf({ input_tokens: 100, output_tokens: 100, cache_read_tokens: 99000, cache_write_tokens: 1 });
   if (tiny.additiveTotal !== 99201 || tiny.cacheWrite !== 1) throw new Error('dashboard tiny/huge-cache composition lost exact values');
+  const overflow = compositionOf({
+    input_tokens: Number.MAX_VALUE,
+    output_tokens: Number.MAX_VALUE,
+    cache_read_tokens: Number.MAX_VALUE,
+    cache_write_tokens: Number.MAX_VALUE,
+    reasoning_tokens: Number.MAX_VALUE
+  });
+  if (!Number.isFinite(overflow.additiveTotal) || overflow.shareTenths.some(value => !Number.isFinite(value))) {
+    throw new Error('dashboard aggregate overflow was not bounded');
+  }
+  if (overflow.shareTenths.reduce((sum, value) => sum + value, 0) !== 1000) {
+    throw new Error('dashboard bounded overflow ratios do not total 100.0%');
+  }
   if (/\.aum-table thead\s*\{[^}]*display:\s*none/.test(dashboardStyles)) {
     throw new Error('mobile tables must not remove column headers from the accessibility tree');
   }
@@ -179,6 +196,10 @@ function contrastRatio(foreground, background) {
     if (contrastRatio(color, '#082522') < 3) throw new Error('series fallback contrast is below 3:1: ' + color);
   }
   if (!dashboardStyles.includes('repeating-linear-gradient') || !dashboardStyles.includes('grid-template-columns: repeat(2')) throw new Error('dashboard reasoning pattern/mobile composition layout missing');
+  if (!/@media\s*\(forced-colors:\s*active\)/.test(dashboardStyles)) throw new Error('dashboard forced-colors support missing');
+  if (!/\.aum-period\s*\{[^}]*min-height:\s*44px;[^}]*min-width:\s*44px;/.test(dashboardStyles.slice(dashboardStyles.indexOf('@media (max-width: 720px)')))) {
+    throw new Error('dashboard narrow period targets are not durably 44x44');
+  }
   if (!dashboardSource.includes('role: "progressbar"')) throw new Error('dashboard quota progress semantics missing');
   if (dashboardStyles.includes('prefers-color-scheme')) throw new Error('token bands must follow the dashboard theme, not the OS theme');
   const sharedBandRule = dashboardStyles.match(/\.aum-band-green,[^{]+\{([^}]*)\}/);
@@ -222,6 +243,8 @@ function contrastRatio(foreground, background) {
   if (!thirtyDayLoaded.includes('thirty-day-model')) throw new Error('thirty-day history response was not rendered: ' + thirtyDayLoaded);
   if (!rendered.includes('abcd12345678')) throw new Error('log reference was not rendered: ' + rendered);
   if (!rendered.includes('Élevée')) throw new Error('visible token band was not rendered: ' + rendered);
+  const tokenBandCell = findFirst(render(), node => node.type === 'td' && String(node.props?.className || '').includes('aum-band-'));
+  if (!tokenBandCell?.props['aria-label']?.includes(new Intl.NumberFormat('fr').format(120000))) throw new Error('dashboard history exact value did not use active French locale');
   if (!rendered.includes('CLI · Sous-agent') || !rendered.includes('security')) throw new Error('profile-labelled workload was not rendered: ' + rendered);
   if (!rendered.includes('Consommation par profil') || !rendered.includes('Données partielles')) throw new Error('profile breakdown/partial warning missing: ' + rendered);
   const profileTable = findFirst(render(), node => node.type === 'table' && node.props && node.props['aria-label'] === 'Consommation par profil');
@@ -241,11 +264,34 @@ function contrastRatio(foreground, background) {
   const chart = findFirst(render(), node => node.type === 'svg' && node.props && node.props.role === 'group');
   if (!chart) throw new Error('chart was not exposed as a labelled group');
   if (!chart.props['aria-label']) throw new Error('chart group is not labelled');
-  const chartBar = findFirst(chart, node => node.type === 'g' && node.props && node.props.role === 'button');
-  if (!chartBar) throw new Error('interactive chart bar was not rendered');
+  let chartBars = findAll(chart, node => node.type === 'g' && node.props && node.props.role === 'button');
+  let chartBar = chartBars[0];
+  if (chartBars.length !== 3) throw new Error('multi-bucket dashboard fixture did not render three interactive bars');
   if (chartBar.props['aria-pressed'] !== false) throw new Error('unselected chart bar state was not exposed');
   if (chartBar.props.tabIndex !== 0 || !chartBar.props['aria-label'].includes('dans la sortie')) throw new Error('dashboard roving focus/accessibility label missing');
+  if (!chartBar.props['aria-label'].includes(new Intl.NumberFormat('fr').format(12345))) throw new Error('dashboard exact values did not use active French locale');
   if (typeof chartBar.props.onFocus !== 'function' || typeof chartBar.props.onMouseEnter !== 'function') throw new Error('dashboard focus/hover breakdown handlers missing');
+  const navigate = (bar, key) => {
+    let focused = null;
+    const targets = chartBars.map((_, index) => ({ focus: () => { focused = index; } }));
+    bar.props.onKeyDown({
+      key,
+      preventDefault: () => {},
+      currentTarget: { ownerSVGElement: { querySelectorAll: () => targets } }
+    });
+    const nextChart = findFirst(render(), node => node.type === 'svg' && node.props && node.props.role === 'group');
+    chartBars = findAll(nextChart, node => node.type === 'g' && node.props && node.props.role === 'button');
+    return focused;
+  };
+  if (navigate(chartBar, 'ArrowRight') !== 1 || chartBars.map(bar => bar.props.tabIndex).join(',') !== '-1,0,-1') throw new Error('dashboard ArrowRight did not transfer roving tab ownership');
+  if (navigate(chartBars[1], 'End') !== 2 || chartBars.map(bar => bar.props.tabIndex).join(',') !== '-1,-1,0') throw new Error('dashboard End did not transfer roving tab ownership');
+  if (navigate(chartBars[2], 'Home') !== 0 || chartBars.map(bar => bar.props.tabIndex).join(',') !== '0,-1,-1') throw new Error('dashboard Home did not transfer roving tab ownership');
+  if (navigate(chartBars[0], 'ArrowLeft') !== 0 || chartBars.map(bar => bar.props.tabIndex).join(',') !== '0,-1,-1') throw new Error('dashboard ArrowLeft boundary ownership failed');
+  chartBars[1].props.onFocus();
+  const rerenderedChart = findFirst(render(), node => node.type === 'svg' && node.props && node.props.role === 'group');
+  chartBars = findAll(rerenderedChart, node => node.type === 'g' && node.props && node.props.role === 'button');
+  if (chartBars.map(bar => bar.props.tabIndex).join(',') !== '-1,0,-1') throw new Error('dashboard rerender/tab-return lost the last focused bucket');
+  chartBar = chartBars[0];
   const webPeriodGroup = findFirst(render(), node => node.props && node.props.role === 'group' && node.props['aria-label'] === 'Période d’utilisation des tokens');
   if (!webPeriodGroup || findAll(webPeriodGroup, node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean').length !== 4) throw new Error('dashboard period button semantics missing');
   const webLegend = findFirst(render(), node => node.props && node.props.className === 'aum-chart-legend');
@@ -264,8 +310,8 @@ function contrastRatio(foreground, background) {
   if (!spacePrevented) throw new Error('Space on a chart bar did not prevent page scrolling');
   const filtered = flatten(render());
   if (!filtered.includes('Sessions du créneau sélectionné')) throw new Error('chart selection did not filter history: ' + filtered);
-  const selectedChartBar = findFirst(render(), node => node.type === 'g' && node.props && node.props.role === 'button');
-  if (!selectedChartBar || selectedChartBar.props['aria-pressed'] !== true) throw new Error('selected chart bar state was not exposed');
+  const selectedChartBar = findFirst(render(), node => node.type === 'g' && node.props && node.props.role === 'button' && node.props['aria-pressed'] === true);
+  if (!selectedChartBar) throw new Error('selected chart bar state was not exposed');
   const modelCell = findFirst(render(), node => node.type === 'td' && node.props && node.props.className === 'aum-model');
   if (!modelCell || modelCell.props['data-label'] !== 'Modèle · fournisseur') throw new Error('mobile model/provider field label missing');
   effect();

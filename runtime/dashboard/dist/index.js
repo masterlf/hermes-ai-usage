@@ -152,12 +152,12 @@
     if (n >= 1000000000) return (n / 1000000000).toFixed(1) + "B";
     if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
     if (n >= 1000) return (n / 1000).toFixed(1) + "k";
-    return n.toLocaleString();
+    return n.toLocaleString(activeLocale());
   }
 
   function finiteToken(value) {
     const number = Number(value || 0);
-    return Number.isFinite(number) && number > 0 ? number : 0;
+    return Number.isFinite(number) && number > 0 ? Math.min(number, Number.MAX_SAFE_INTEGER) : 0;
   }
 
   function allocateShareTenths(values, total) {
@@ -220,6 +220,10 @@
     const locale = activeLocale();
     const value = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(tenths / 10);
     return value + (locale.toLowerCase().startsWith("fr") ? " %" : "%");
+  }
+
+  function formatExactNumber(value) {
+    return new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value);
   }
 
   function bindingWindow(account) {
@@ -373,6 +377,9 @@
     const history = props.history || {};
     const series = history.series || {};
     const points = series.points || [];
+    const preferredRovingIndex = Math.max(0, props.selectedBucket === null
+      ? points.findIndex(function (point) { return compositionOf(point).additiveTotal > 0; })
+      : points.findIndex(function (point) { return Number(point.bucket_start) === props.selectedBucket; }));
     const t = props.t;
     const viewportRef = React.useRef(null);
     const patternRef = React.useRef("aum-reasoning-" + (++chartInstance));
@@ -383,6 +390,9 @@
     const activeState = React.useState(null);
     const activeIndex = activeState[0];
     const setActiveIndex = activeState[1];
+    const rovingState = React.useState(preferredRovingIndex);
+    const rovingIndex = points.length ? Math.max(0, Math.min(points.length - 1, rovingState[0])) : 0;
+    const setRovingIndex = rovingState[1];
     React.useEffect(function () {
       const viewport = viewportRef.current;
       if (!viewport) return undefined;
@@ -424,13 +434,12 @@
     const percent = formatPercentTenths;
     const firstDate = points.length ? formatBucket(points[0].bucket_start, series.bucket) : "—";
     const lastDate = points.length ? formatBucket(points[points.length - 1].bucket_start, series.bucket) : "—";
-    const initialIndex = Math.max(0, props.selectedBucket === null
-      ? compositions.findIndex(function (composition) { return composition.additiveTotal > 0; })
-      : points.findIndex(function (point) { return Number(point.bucket_start) === props.selectedBucket; }));
     const focusBucket = function (event, index) {
+      const targetIndex = Math.max(0, Math.min(points.length - 1, index));
+      setRovingIndex(targetIndex);
       const svg = event.currentTarget && event.currentTarget.ownerSVGElement;
       const bars = svg && svg.querySelectorAll && svg.querySelectorAll("[data-bucket-index]");
-      const target = bars && bars[Math.max(0, Math.min(points.length - 1, index))];
+      const target = bars && bars[targetIndex];
       if (target && target.focus) target.focus();
     };
 
@@ -459,9 +468,9 @@
           className: "aum-composition-strip",
           role: "img",
           "aria-label": period.additiveTotal
-            ? t.periodComposition + ": " + period.additiveTotal.toLocaleString() + " " + t.tokens + "; "
+            ? t.periodComposition + ": " + formatExactNumber(period.additiveTotal) + " " + t.tokens + "; "
               + t.inputLegend + " " + percent(period.shareTenths[0]) + "; "
-              + t.outputLegend + " " + percent(period.shareTenths[1]) + ", " + t.reasoningLegend + " " + period.reasoning.toLocaleString() + "; "
+              + t.outputLegend + " " + percent(period.shareTenths[1]) + ", " + t.reasoningLegend + " " + formatExactNumber(period.reasoning) + "; "
               + t.cacheReadLegend + " " + percent(period.shareTenths[2]) + "; " + t.cacheWriteLegend + " " + percent(period.shareTenths[3])
             : t.emptyComposition
         }, [
@@ -529,26 +538,26 @@
               });
             });
             const label = formatBucket(point.bucket_start, series.bucket);
-            const tooltip = t.bucketBreakdown(label) + " · " + composition.additiveTotal.toLocaleString() + " " + t.tokens
-              + " · " + t.inputLegend + " " + composition.input.toLocaleString() + " " + percent(composition.shareTenths[0])
-              + " · " + t.outputLegend + " " + composition.output.toLocaleString() + " " + percent(composition.shareTenths[1])
-              + " · " + t.reasoningLegend + " " + composition.reasoning.toLocaleString() + " " + percent(composition.reasoningOutputTenths) + " " + t.ofOutput
-              + " · " + t.cacheReadLegend + " " + composition.cacheRead.toLocaleString() + " " + percent(composition.shareTenths[2])
-              + " · " + t.cacheWriteLegend + " " + composition.cacheWrite.toLocaleString() + " " + percent(composition.shareTenths[3])
+            const tooltip = t.bucketBreakdown(label) + " · " + formatExactNumber(composition.additiveTotal) + " " + t.tokens
+              + " · " + t.inputLegend + " " + formatExactNumber(composition.input) + " " + percent(composition.shareTenths[0])
+              + " · " + t.outputLegend + " " + formatExactNumber(composition.output) + " " + percent(composition.shareTenths[1])
+              + " · " + t.reasoningLegend + " " + formatExactNumber(composition.reasoning) + " " + percent(composition.reasoningOutputTenths) + " " + t.ofOutput
+              + " · " + t.cacheReadLegend + " " + formatExactNumber(composition.cacheRead) + " " + percent(composition.shareTenths[2])
+              + " · " + t.cacheWriteLegend + " " + formatExactNumber(composition.cacheWrite) + " " + percent(composition.shareTenths[3])
               + " · " + compact(point.sessions) + " " + t.sessions
               + " · " + compact(point.api_calls) + " " + t.calls;
             const selected = props.selectedBucket === Number(point.bucket_start);
             return h("g", {
               className: "aum-chart-bar" + (selected ? " is-selected" : ""),
               role: "button",
-              tabIndex: index === initialIndex ? 0 : -1,
+              tabIndex: index === rovingIndex ? 0 : -1,
               "data-bucket-index": index,
               "aria-label": tooltip,
               "aria-pressed": selected,
               onClick: function () { props.onSelect(Number(point.bucket_start)); },
               onMouseEnter: function () { setActiveIndex(index); },
               onMouseLeave: function () { setActiveIndex(null); },
-              onFocus: function () { setActiveIndex(index); },
+              onFocus: function () { setRovingIndex(index); setActiveIndex(index); },
               onBlur: function () { setActiveIndex(null); },
               onKeyDown: function (event) {
                 if ([" ", "ArrowLeft", "ArrowRight", "Home", "End", "Escape"].includes(event.key)) event.preventDefault();
@@ -586,13 +595,13 @@
   }
 
   function bucketTooltip(point, composition, bucket, t, percent) {
-    return t.bucketBreakdown(formatBucket(point.bucket_start, bucket)) + " · " + composition.additiveTotal.toLocaleString() + " " + t.tokens
+    return t.bucketBreakdown(formatBucket(point.bucket_start, bucket)) + " · " + formatExactNumber(composition.additiveTotal) + " " + t.tokens
       + " · " + compact(point.sessions) + " " + t.sessions + " · " + compact(point.api_calls) + " " + t.calls
-      + " · " + t.inputLegend + " " + composition.input.toLocaleString() + " " + percent(composition.shareTenths[0])
-      + " · " + t.outputLegend + " " + composition.output.toLocaleString() + " " + percent(composition.shareTenths[1])
-      + " · " + t.reasoningLegend + " " + composition.reasoning.toLocaleString() + " " + percent(composition.reasoningOutputTenths) + " " + t.ofOutput
-      + " · " + t.cacheReadLegend + " " + composition.cacheRead.toLocaleString() + " " + percent(composition.shareTenths[2])
-      + " · " + t.cacheWriteLegend + " " + composition.cacheWrite.toLocaleString() + " " + percent(composition.shareTenths[3]);
+      + " · " + t.inputLegend + " " + formatExactNumber(composition.input) + " " + percent(composition.shareTenths[0])
+      + " · " + t.outputLegend + " " + formatExactNumber(composition.output) + " " + percent(composition.shareTenths[1])
+      + " · " + t.reasoningLegend + " " + formatExactNumber(composition.reasoning) + " " + percent(composition.reasoningOutputTenths) + " " + t.ofOutput
+      + " · " + t.cacheReadLegend + " " + formatExactNumber(composition.cacheRead) + " " + percent(composition.shareTenths[2])
+      + " · " + t.cacheWriteLegend + " " + formatExactNumber(composition.cacheWrite) + " " + percent(composition.shareTenths[3]);
   }
 
   function HistoryTable(props) {
@@ -644,7 +653,7 @@
               h("td", {
                 className: "aum-num aum-band-" + (band ? band.key : "none"),
                 title: tokenDetail,
-                "aria-label": band ? Number(row.total_tokens).toLocaleString() + " " + t.tokens + ", " + band.label : t.usageUnavailable,
+                "aria-label": band ? formatExactNumber(Number(row.total_tokens)) + " " + t.tokens + ", " + band.label : t.usageUnavailable,
                 "data-label": t.tokens
               }, band ? compact(row.total_tokens) + " · " + band.label : "—"),
               h("td", { "data-label": t.logRef }, row.session_ref ? h("code", { className: "aum-session-ref", title: t.logRef }, row.session_ref) : "—")
