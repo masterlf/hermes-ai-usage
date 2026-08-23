@@ -151,13 +151,34 @@ function contrastRatio(foreground, background) {
 }
 
 (async () => {
-  vm.runInNewContext(fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8'), sandbox);
   const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
+  const instrumentedSource = dashboardSource.replace(
+    'registry.register("ai-usage-monitor", AIUsagePage);',
+    'window.__compositionOf = compositionOf; registry.register("ai-usage-monitor", AIUsagePage);'
+  );
+  vm.runInNewContext(instrumentedSource, sandbox);
   const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
+  const compositionOf = sandbox.window.__compositionOf;
+  if (typeof compositionOf !== 'function') throw new Error('dashboard composition helper missing');
+  const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
+  if (normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('dashboard composition math is incorrect');
+  if (normal.shareTenths.join(',') !== '100,200,600,100') throw new Error('dashboard top-level ratios are incorrect: ' + normal.shareTenths);
+  const thirds = compositionOf({ input_tokens: 1, output_tokens: 1, cache_read_tokens: 1 });
+  if (thirds.shareTenths.reduce((sum, value) => sum + value, 0) !== 1000) throw new Error('dashboard displayed ratios do not total 100.0%');
+  const hostile = compositionOf({ input_tokens: -1, output_tokens: 2, reasoning_tokens: 99, cache_read_tokens: Infinity, cache_write_tokens: NaN });
+  if (hostile.additiveTotal !== 2 || hostile.reasoning !== 2 || hostile.outputNonReasoning !== 0) throw new Error('dashboard hostile values were not normalized');
+  const zero = compositionOf({});
+  if (zero.additiveTotal !== 0 || zero.shareTenths.some(value => value !== 0) || zero.reasoningOutputTenths !== 0) throw new Error('dashboard zero composition is not finite');
+  const tiny = compositionOf({ input_tokens: 100, output_tokens: 100, cache_read_tokens: 99000, cache_write_tokens: 1 });
+  if (tiny.additiveTotal !== 99201 || tiny.cacheWrite !== 1) throw new Error('dashboard tiny/huge-cache composition lost exact values');
   if (/\.aum-table thead\s*\{[^}]*display:\s*none/.test(dashboardStyles)) {
     throw new Error('mobile tables must not remove column headers from the accessibility tree');
   }
   if (!dashboardSource.includes('ResizeObserver')) throw new Error('dashboard chart is not container-aware');
+  for (const color of ['#5ad4ff', '#f2eee3', '#f6c85f', '#d99bff']) {
+    if (contrastRatio(color, '#082522') < 3) throw new Error('series fallback contrast is below 3:1: ' + color);
+  }
+  if (!dashboardStyles.includes('repeating-linear-gradient') || !dashboardStyles.includes('grid-template-columns: repeat(2')) throw new Error('dashboard reasoning pattern/mobile composition layout missing');
   if (!dashboardSource.includes('role: "progressbar"')) throw new Error('dashboard quota progress semantics missing');
   if (dashboardStyles.includes('prefers-color-scheme')) throw new Error('token bands must follow the dashboard theme, not the OS theme');
   const sharedBandRule = dashboardStyles.match(/\.aum-band-green,[^{]+\{([^}]*)\}/);
@@ -185,6 +206,7 @@ function contrastRatio(foreground, background) {
   if (!rendered.includes('65% utilisés')) throw new Error('provider used fallback was not rendered');
   if (!rendered.includes('gpt-test')) throw new Error('history row was not rendered: ' + rendered);
   if (!rendered.includes('Utilisation des tokens')) throw new Error('usage chart was not rendered: ' + rendered);
+  if (!rendered.includes('Composition de la période') || !rendered.includes('Raisonnement (dans la sortie)')) throw new Error('French dashboard composition summary missing: ' + rendered);
   const periodButtons = findAll(render(), node => node.type === 'button' && node.props && typeof node.props.onClick === 'function');
   const thirtyDayButton = periodButtons.find(node => flatten(node).includes('30d'));
   if (!thirtyDayButton) throw new Error('30-day period button was not rendered');
@@ -213,6 +235,7 @@ function contrastRatio(foreground, background) {
   sandbox.document.documentElement.lang = 'en';
   const englishRendered = flatten(render());
   if (!englishRendered.includes('2m 05s')) throw new Error('English session duration was not localized: ' + englishRendered);
+  if (!englishRendered.includes('Period composition') || !englishRendered.includes('Reasoning (within output)')) throw new Error('English dashboard composition copy missing: ' + englishRendered);
   sandbox.document.documentElement.lang = 'fr';
   if (rendered.includes('1970')) throw new Error('Unix seconds were rendered as milliseconds: ' + rendered);
   const chart = findFirst(render(), node => node.type === 'svg' && node.props && node.props.role === 'group');
@@ -221,6 +244,17 @@ function contrastRatio(foreground, background) {
   const chartBar = findFirst(chart, node => node.type === 'g' && node.props && node.props.role === 'button');
   if (!chartBar) throw new Error('interactive chart bar was not rendered');
   if (chartBar.props['aria-pressed'] !== false) throw new Error('unselected chart bar state was not exposed');
+  if (chartBar.props.tabIndex !== 0 || !chartBar.props['aria-label'].includes('dans la sortie')) throw new Error('dashboard roving focus/accessibility label missing');
+  if (typeof chartBar.props.onFocus !== 'function' || typeof chartBar.props.onMouseEnter !== 'function') throw new Error('dashboard focus/hover breakdown handlers missing');
+  const webPeriodGroup = findFirst(render(), node => node.props && node.props.role === 'group' && node.props['aria-label'] === 'Période d’utilisation des tokens');
+  if (!webPeriodGroup || findAll(webPeriodGroup, node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean').length !== 4) throw new Error('dashboard period button semantics missing');
+  const webLegend = findFirst(render(), node => node.props && node.props.className === 'aum-chart-legend');
+  if (!webLegend || findAll(webLegend, node => node.type === 'i').length !== 5) throw new Error('dashboard five labelled legend swatches missing');
+  chartBar.props.onFocus();
+  const focusTooltip = findFirst(render(), node => node.props && node.props.role === 'tooltip');
+  if (!focusTooltip || !flatten(focusTooltip).includes('Raisonnement (dans la sortie)')) throw new Error('dashboard focus tooltip missing exact breakdown');
+  chartBar.props.onKeyDown({ key: 'Escape', preventDefault: () => {} });
+  if (findFirst(render(), node => node.props && node.props.role === 'tooltip')) throw new Error('dashboard Escape did not dismiss tooltip');
   let spacePrevented = false;
   holdNextUnfiltered = true;
   effect();

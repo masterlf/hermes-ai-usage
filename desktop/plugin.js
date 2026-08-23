@@ -16,6 +16,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 const ID = 'ai-usage-monitor'
 const ROUTE = '/ai-usage'
 let pluginContext = null
+let chartInstance = 0
 
 function pluginRest(path, options) {
   if (!pluginContext) throw new Error('AI Usage Monitor is not registered')
@@ -28,6 +29,39 @@ function compactNumber(value) {
   if (number >= 1_000_000) return `${(number / 1_000_000).toFixed(1)}M`
   if (number >= 1_000) return `${(number / 1_000).toFixed(1)}k`
   return number.toLocaleString()
+}
+
+function finiteToken(value) {
+  const number = Number(value || 0)
+  return Number.isFinite(number) && number > 0 ? number : 0
+}
+
+function allocateShareTenths(values, total) {
+  if (!(total > 0)) return values.map(() => 0)
+  const raw = values.map(value => value / total * 1000)
+  const allocated = raw.map(Math.floor)
+  let remainder = 1000 - allocated.reduce((sum, value) => sum + value, 0)
+  const order = raw.map((value, index) => ({ index, fraction: value - allocated[index] }))
+    .sort((a, b) => b.fraction - a.fraction || a.index - b.index)
+  for (let index = 0; index < order.length && remainder > 0; index += 1, remainder -= 1) {
+    allocated[order[index].index] += 1
+  }
+  return allocated
+}
+
+function compositionOf(source = {}) {
+  const input = finiteToken(source.input_tokens)
+  const output = finiteToken(source.output_tokens)
+  const cacheRead = finiteToken(source.cache_read_tokens)
+  const cacheWrite = finiteToken(source.cache_write_tokens)
+  const reasoning = Math.min(output, finiteToken(source.reasoning_tokens))
+  const outputNonReasoning = output - reasoning
+  const additiveTotal = input + output + cacheRead + cacheWrite
+  return {
+    input, output, outputNonReasoning, reasoning, cacheRead, cacheWrite, additiveTotal,
+    shareTenths: allocateShareTenths([input, output, cacheRead, cacheWrite], additiveTotal),
+    reasoningOutputTenths: output > 0 ? Math.round(reasoning / output * 1000) : 0
+  }
 }
 
 function formatDate(value) {
@@ -48,6 +82,18 @@ function formatBucket(value, bucket) {
     timeStyle: bucket === 'hour' ? 'short' : undefined,
     timeZone: 'UTC'
   }).format(date)
+}
+
+function activeLocale() {
+  return typeof document !== 'undefined' && document.documentElement?.lang
+    ? document.documentElement.lang
+    : undefined
+}
+
+function formatPercentTenths(tenths) {
+  const locale = activeLocale()
+  const value = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(tenths / 10)
+  return `${value}${String(locale || '').toLowerCase().startsWith('fr') ? ' %' : '%'}`
 }
 
 function sessionReference(value) {
@@ -319,7 +365,9 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
   const t = usePluginI18n(ID)
   const points = history?.series?.points || []
   const viewportRef = useRef(null)
+  const patternId = useRef(`aum-reasoning-${chartInstance += 1}`).current
   const [viewportWidth, setViewportWidth] = useState(320)
+  const [activeIndex, setActiveIndex] = useState(null)
   useEffect(() => {
     const viewport = viewportRef.current
     if (!viewport) return undefined
@@ -337,15 +385,13 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
   const chartHeight = 142
   const step = (width - left - right) / Math.max(1, points.length)
   const barWidth = Math.max(3, Math.min(18, step * 0.66))
-  const maximum = Math.max(1, ...points.map(point => Number(point.total_tokens || 0)))
+  const compositions = points.map(compositionOf)
+  const maximum = Math.max(1, ...compositions.map(composition => composition.additiveTotal))
   const periodCadence = days === 1 ? 4 : days === 7 ? 1 : days === 30 ? 5 : 14
   const labelStep = Math.max(periodCadence, Math.ceil(72 / step))
   const colors = {
-    input: 'var(--ui-accent)',
-    output: 'var(--ui-text-secondary)',
-    reasoning: 'var(--ui-accent)',
-    cacheRead: 'var(--ui-text-tertiary)',
-    cacheWrite: 'var(--ui-text-quaternary)'
+    input: 'var(--aum-series-input, #5AD4FF)', output: 'var(--aum-series-output, #F2EEE3)',
+    cacheRead: 'var(--aum-series-cache-read, #F6C85F)', cacheWrite: 'var(--aum-series-cache-write, #D99BFF)'
   }
   const legend = [
     ['input', t('input')],
@@ -354,9 +400,37 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
     ['cacheRead', t('cacheRead')],
     ['cacheWrite', t('cacheWrite')]
   ]
+  const period = compositionOf(points.reduce((total, point) => ({
+    input_tokens: total.input_tokens + finiteToken(point.input_tokens),
+    output_tokens: total.output_tokens + finiteToken(point.output_tokens),
+    reasoning_tokens: total.reasoning_tokens + Math.min(finiteToken(point.output_tokens), finiteToken(point.reasoning_tokens)),
+    cache_read_tokens: total.cache_read_tokens + finiteToken(point.cache_read_tokens),
+    cache_write_tokens: total.cache_write_tokens + finiteToken(point.cache_write_tokens)
+  }), { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 }))
+  const percent = formatPercentTenths
+  const firstDate = points.length ? formatBucket(points[0].bucket_start, history?.series?.bucket) : '—'
+  const lastDate = points.length ? formatBucket(points[points.length - 1].bucket_start, history?.series?.bucket) : '—'
+  const summaryLabel = `${t('periodComposition')}: ${period.additiveTotal.toLocaleString()} ${t('tokens')}. ${t('input')} ${percent(period.shareTenths[0])}; ${t('output')} ${percent(period.shareTenths[1])}, ${t('reasoningSubset')} ${compactNumber(period.reasoning)}; ${t('cacheRead')} ${percent(period.shareTenths[2])}; ${t('cacheWrite')} ${percent(period.shareTenths[3])}`
+  const metrics = [
+    ['input', t('input'), period.input, period.shareTenths[0]],
+    ['output', t('output'), period.output, period.shareTenths[1]],
+    ['cacheRead', t('cacheRead'), period.cacheRead, period.shareTenths[2]],
+    ['cacheWrite', t('cacheWrite'), period.cacheWrite, period.shareTenths[3]]
+  ]
+  const initialIndex = Math.max(0, selectedBucket === null
+    ? compositions.findIndex(composition => composition.additiveTotal > 0)
+    : points.findIndex(point => Number(point.bucket_start) === selectedBucket))
+  const focusBucket = (event, index) => {
+    const bars = event.currentTarget?.ownerSVGElement?.querySelectorAll?.('[data-bucket-index]')
+    bars?.[Math.max(0, Math.min(points.length - 1, index))]?.focus?.()
+  }
 
   return jsxs('section', {
     className: 'rounded-md border border-(--ui-stroke-secondary)',
+    style: {
+      '--aum-series-input': '#5AD4FF', '--aum-series-output': '#F2EEE3',
+      '--aum-series-cache-read': '#F6C85F', '--aum-series-cache-write': '#D99BFF'
+    },
     children: [
       jsxs('div', {
         className: 'flex items-end justify-between gap-3 border-b border-(--ui-stroke-secondary) p-3',
@@ -369,6 +443,8 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
           }),
           jsx('div', {
             className: 'flex gap-1',
+            role: 'group',
+            'aria-label': t('periodGroup'),
             children: [1, 7, 30, 90].map(period => jsx('button', {
               type: 'button',
               className: [
@@ -377,11 +453,50 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
                   ? 'border-(--ui-accent) text-foreground'
                   : 'border-(--ui-stroke-secondary) text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover)'
               ].join(' '),
+              'aria-pressed': period === days,
               onClick: () => onDays(period),
               children: period === 1 ? '24h' : `${period}d`
             }, period))
           })
         ]
+      }),
+      jsx('div', {
+        className: 'border-b border-(--ui-stroke-secondary) p-3',
+        children: jsxs('div', { children: [
+          jsxs('div', { className: 'flex flex-col gap-1 text-xs sm:flex-row sm:justify-between', children: [
+            jsx('strong', { children: t('periodComposition') }),
+            jsx('span', { className: 'tabular-nums text-(--ui-text-tertiary)', children: t('periodTotal', compactNumber(period.additiveTotal), firstDate, lastDate) })
+          ] }),
+          jsx('div', {
+            className: 'mt-2 flex h-4 overflow-hidden border border-(--ui-stroke-secondary) bg-(--ui-bg-secondary)',
+            role: 'img',
+            'aria-label': period.additiveTotal ? summaryLabel : t('emptyComposition'),
+            children: [
+              ['input', period.input, colors.input],
+              ['output', period.outputNonReasoning, colors.output],
+              ['reasoning', period.reasoning, `repeating-linear-gradient(135deg, ${colors.output} 0 3px, #082522 3px 5px)`],
+              ['cacheRead', period.cacheRead, colors.cacheRead],
+              ['cacheWrite', period.cacheWrite, colors.cacheWrite]
+            ].map(([name, value, background]) => jsx('span', {
+              style: { width: period.additiveTotal ? `${value / period.additiveTotal * 100}%` : '0%', background },
+              'aria-hidden': true
+            }, name))
+          }),
+          jsx('div', {
+            className: 'mt-3 grid grid-cols-2 gap-3 text-xs lg:grid-cols-4',
+            children: metrics.map(([name, label, value, share]) => jsxs('div', {
+              className: 'grid min-w-0 grid-cols-[12px_1fr] gap-x-2',
+              children: [
+                jsx('i', { className: 'mt-0.5 size-2.5 border border-(--ui-stroke-secondary)', style: { background: colors[name] } }),
+                jsxs('span', { className: 'min-w-0', children: [
+                  jsx('span', { className: 'block text-(--ui-text-tertiary)', children: label }),
+                  jsx('b', { className: 'block tabular-nums', children: `${percent(share)} · ${compactNumber(value)}` }),
+                  name === 'output' ? jsx('small', { className: 'block text-(--ui-text-tertiary)', children: `↳ ${t('reasoningShare', percent(period.reasoningOutputTenths), compactNumber(period.reasoning))}` }) : null
+                ] })
+              ]
+            }, name))
+          })
+        ] })
       }),
       points.length ? jsx('div', {
         className: 'w-full overflow-x-auto overscroll-x-contain px-2 pt-1',
@@ -393,21 +508,25 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
           role: 'group',
           'aria-label': t('usageChart'),
           children: [
+            jsx('defs', { children: jsx('pattern', {
+              id: patternId, patternUnits: 'userSpaceOnUse', width: 5, height: 5, patternTransform: 'rotate(135)',
+              children: [jsx('rect', { width: 5, height: 5, fill: colors.output }), jsx('rect', { width: 2, height: 5, fill: '#082522' })]
+            }) }),
             jsx('line', { x1: left, y1: baseline, x2: width - right, y2: baseline, stroke: 'var(--ui-stroke-secondary)' }),
             jsx('line', { x1: left, y1: baseline - chartHeight / 2, x2: width - right, y2: baseline - chartHeight / 2, stroke: 'var(--ui-stroke-secondary)', opacity: 0.45 }),
             jsx('line', { x1: left, y1: baseline - chartHeight, x2: width - right, y2: baseline - chartHeight, stroke: 'var(--ui-stroke-secondary)', opacity: 0.45 }),
             ...points.map((point, index) => {
-              const reasoning = Math.min(Number(point.reasoning_tokens || 0), Number(point.output_tokens || 0))
+              const composition = compositions[index]
               const segments = [
-                ['input', Number(point.input_tokens || 0), 1],
-                ['cacheRead', Number(point.cache_read_tokens || 0), 1],
-                ['cacheWrite', Number(point.cache_write_tokens || 0), 1],
-                ['output', Math.max(0, Number(point.output_tokens || 0) - reasoning), 1],
-                ['reasoning', reasoning, 0.58]
+                ['input', composition.input],
+                ['output', composition.outputNonReasoning],
+                ['reasoning', composition.reasoning],
+                ['cacheRead', composition.cacheRead],
+                ['cacheWrite', composition.cacheWrite]
               ]
               const x = left + index * step + (step - barWidth) / 2
               let y = baseline
-              const rectangles = segments.map(([name, value, opacity]) => {
+              const rectangles = segments.map(([name, value]) => {
                 const segmentHeight = Math.max(0, value / maximum * chartHeight)
                 y -= segmentHeight
                 return jsx('rect', {
@@ -415,28 +534,36 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
                   y,
                   width: barWidth,
                   height: segmentHeight,
-                  fill: colors[name],
-                  opacity,
-                  stroke: selectedBucket === Number(point.bucket_start) ? 'var(--ui-accent)' : 'none',
-                  strokeWidth: 1.5
+                  fill: name === 'reasoning' ? `url(#${patternId})` : colors[name]
                 }, name)
               })
               const label = formatBucket(point.bucket_start, history?.series?.bucket)
-              const tooltip = `${label} UTC · ${Number(point.total_tokens || 0).toLocaleString()} ${t('tokens')} · ${t('input')} ${compactNumber(point.input_tokens)} · ${t('output')} ${compactNumber(point.output_tokens)} · ${t('cacheRead')} ${compactNumber(point.cache_read_tokens)} · ${t('cacheWrite')} ${compactNumber(point.cache_write_tokens)} · ${t('reasoningSubset')} ${compactNumber(point.reasoning_tokens)} · ${compactNumber(point.sessions)} ${t('sessions')} · ${compactNumber(point.api_calls)} ${t('apiCalls')}`
+              const tooltip = `${t('bucketBreakdown', label)} · ${composition.additiveTotal.toLocaleString()} ${t('tokens')} · ${compactNumber(point.sessions)} ${t('sessions')} · ${compactNumber(point.api_calls)} ${t('apiCalls')} · ${t('input')} ${composition.input.toLocaleString()} ${percent(composition.shareTenths[0])} · ${t('output')} ${composition.output.toLocaleString()} ${percent(composition.shareTenths[1])} · ${t('reasoningSubset')} ${composition.reasoning.toLocaleString()} ${percent(composition.reasoningOutputTenths)} ${t('ofOutput')} · ${t('cacheRead')} ${composition.cacheRead.toLocaleString()} ${percent(composition.shareTenths[2])} · ${t('cacheWrite')} ${composition.cacheWrite.toLocaleString()} ${percent(composition.shareTenths[3])}`
               return jsxs('g', {
                 role: 'button',
-                tabIndex: 0,
+                tabIndex: index === initialIndex ? 0 : -1,
+                'data-bucket-index': index,
                 className: 'cursor-pointer opacity-80 hover:opacity-100 focus:opacity-100',
                 'aria-label': tooltip,
                 'aria-pressed': selectedBucket === Number(point.bucket_start),
                 onClick: () => onSelect(Number(point.bucket_start)),
+                onMouseEnter: () => setActiveIndex(index),
+                onMouseLeave: () => setActiveIndex(null),
+                onFocus: () => setActiveIndex(index),
+                onBlur: () => setActiveIndex(null),
                 onKeyDown: event => {
-                  if (event.key === ' ') event.preventDefault()
+                  if ([' ', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'Escape'].includes(event.key)) event.preventDefault()
                   if (event.key === 'Enter' || event.key === ' ') onSelect(Number(point.bucket_start))
+                  if (event.key === 'ArrowLeft') focusBucket(event, index - 1)
+                  if (event.key === 'ArrowRight') focusBucket(event, index + 1)
+                  if (event.key === 'Home') focusBucket(event, 0)
+                  if (event.key === 'End') focusBucket(event, points.length - 1)
+                  if (event.key === 'Escape') setActiveIndex(null)
                 },
                 children: [
                   jsx('title', { children: tooltip }),
                   ...rectangles,
+                  jsx('rect', { x: x - 2, y: baseline - composition.additiveTotal / maximum * chartHeight - 2, width: barWidth + 4, height: composition.additiveTotal / maximum * chartHeight + 4, fill: 'none', stroke: selectedBucket === Number(point.bucket_start) ? 'var(--ui-accent)' : 'transparent', strokeWidth: 2 }),
                   index % labelStep === 0 || index === points.length - 1 ? jsx('text', {
                     x: x + barWidth / 2,
                     y: baseline + 22,
@@ -452,18 +579,27 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
           ]
         })
       }) : jsx('p', { className: 'p-3 text-sm text-(--ui-text-tertiary)', children: t('noHistory') }),
+      activeIndex !== null && points[activeIndex] ? jsx('div', {
+        role: 'tooltip',
+        className: 'mx-3 mb-3 border border-(--ui-stroke-secondary) bg-(--ui-bg-secondary) p-2 text-xs shadow-lg',
+        children: findTooltipText(points[activeIndex], compositions[activeIndex], history?.series?.bucket, t, percent)
+      }) : null,
       jsx('div', {
         className: 'flex flex-wrap gap-x-4 gap-y-2 border-t border-(--ui-stroke-secondary) p-3 text-xs text-(--ui-text-tertiary)',
         children: legend.map(([name, label]) => jsxs('span', {
           className: 'inline-flex items-center gap-1.5',
           children: [
-            jsx('i', { className: 'inline-block size-2.5', style: { backgroundColor: colors[name], opacity: name === 'reasoning' ? 0.58 : 1 } }),
+            jsx('i', { className: 'inline-block size-2.5 border border-(--ui-stroke-secondary)', style: { background: name === 'reasoning' ? `repeating-linear-gradient(135deg, ${colors.output} 0 3px, #082522 3px 5px)` : colors[name] } }),
             label
           ]
         }, name))
       })
     ]
   })
+}
+
+function findTooltipText(point, composition, bucket, t, percent) {
+  return `${t('bucketBreakdown', formatBucket(point.bucket_start, bucket))} · ${composition.additiveTotal.toLocaleString()} ${t('tokens')} · ${compactNumber(point.sessions)} ${t('sessions')} · ${compactNumber(point.api_calls)} ${t('apiCalls')} · ${t('input')} ${composition.input.toLocaleString()} ${percent(composition.shareTenths[0])} · ${t('output')} ${composition.output.toLocaleString()} ${percent(composition.shareTenths[1])} · ${t('reasoningSubset')} ${composition.reasoning.toLocaleString()} ${percent(composition.reasoningOutputTenths)} ${t('ofOutput')} · ${t('cacheRead')} ${composition.cacheRead.toLocaleString()} ${percent(composition.shareTenths[2])} · ${t('cacheWrite')} ${composition.cacheWrite.toLocaleString()} ${percent(composition.shareTenths[3])}`
 }
 
 function ProfileBreakdown({ history }) {
@@ -694,6 +830,13 @@ export default {
         truncatedHistory: 'Bounded results: some sessions in this bucket are not displayed.',
         usageChart: 'Token usage',
         chartHint: 'UTC buckets · select a bar to isolate its sessions below.',
+        periodComposition: 'Period composition',
+        periodTotal: (total, start, end) => `${total} tokens · ${start}–${end} UTC`,
+        periodGroup: 'Token usage period',
+        reasoningShare: (percent, value) => `Reasoning ${percent} of output · ${value}`,
+        bucketBreakdown: date => `Token breakdown for ${date} UTC`,
+        emptyComposition: 'No token usage in this period.',
+        ofOutput: 'of output',
         logsRef: 'Log ref',
         quotaUnavailable: 'Account quota is unavailable for this provider.',
         usageUnavailable: 'Usage unavailable',
@@ -755,6 +898,13 @@ export default {
         truncatedHistory: 'Résultats bornés : certaines sessions du créneau ne sont pas affichées.',
         usageChart: 'Utilisation des tokens',
         chartHint: 'Créneaux UTC · sélectionne une barre pour isoler ses sessions ci-dessous.',
+        periodComposition: 'Composition de la période',
+        periodTotal: (total, start, end) => `${total} tokens · du ${start} au ${end} UTC`,
+        periodGroup: 'Période d’utilisation des tokens',
+        reasoningShare: (percent, value) => `Raisonnement ${percent} de la sortie · ${value}`,
+        bucketBreakdown: date => `Répartition des tokens pour le ${date} UTC`,
+        emptyComposition: 'Aucun token utilisé sur cette période.',
+        ofOutput: 'de la sortie',
         logsRef: 'Réf. logs',
         quotaUnavailable: 'Le quota du compte n’est pas disponible pour ce fournisseur.',
         usageUnavailable: 'Consommation indisponible',
