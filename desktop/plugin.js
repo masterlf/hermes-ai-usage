@@ -118,7 +118,7 @@ function workloadLabel(row, t) {
   const workload = row.workload_type && !['interactive', 'unknown'].includes(row.workload_type)
     ? t(`workload_${row.workload_type}`)
     : null
-  return [surface, workload, row.profile].filter(Boolean).join(' · ')
+  return [surface, workload].filter(Boolean).join(' · ')
 }
 
 function useAccountSnapshot() {
@@ -143,12 +143,13 @@ function useSessionUsage() {
   return { sessionId, ...query }
 }
 
-function useHistory(days, selectedBucket) {
+function useHistory(days, selectedBucket, scope) {
   const profile = useValue(host.state.profile)
   const bucketQuery = selectedBucket === null ? '' : `&bucket_start=${encodeURIComponent(String(selectedBucket))}`
+  const scopeQuery = scope === 'all' ? '&scope=all' : ''
   return useQuery({
-    queryKey: [ID, 'history', profile, days, selectedBucket],
-    queryFn: () => pluginRest(`/history?days=${days}&limit=200${bucketQuery}`, { timeoutMs: 10_000 }),
+    queryKey: [ID, 'history', profile, days, selectedBucket, scope],
+    queryFn: () => pluginRest(`/history?days=${days}&limit=200${scopeQuery}${bucketQuery}`, { timeoutMs: 10_000 }),
     refetchInterval: 30_000,
     retry: 1
   })
@@ -211,6 +212,7 @@ function AccountCard({ account }) {
       className: 'rounded-md border border-(--ui-stroke-secondary) p-3',
       children: [
         jsx('h2', { className: 'font-medium', children: t('accountTitle') }),
+        jsx('p', { className: 'mt-1 text-xs text-(--ui-text-tertiary)', children: t('sharedQuota') }),
         jsx('p', {
           className: 'mt-2 text-sm text-(--ui-text-tertiary)',
           children: account?.reason || t('quotaUnavailable')
@@ -228,6 +230,7 @@ function AccountCard({ account }) {
           jsxs('div', {
             children: [
               jsx('h2', { className: 'font-medium', children: t('accountTitle') }),
+              jsx('p', { className: 'text-xs text-(--ui-text-tertiary)', children: t('sharedQuota') }),
               jsx('p', {
                 className: 'text-xs text-(--ui-text-tertiary)',
                 children: `${account.provider}${account.plan ? ` · ${account.plan}` : ''}`
@@ -463,6 +466,33 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
   })
 }
 
+function ProfileBreakdown({ history }) {
+  const t = usePluginI18n(ID)
+  const profiles = history?.profiles || []
+  if (!profiles.length) return null
+  return jsxs('section', {
+    className: 'rounded-md border border-(--ui-stroke-secondary) p-3',
+    children: [
+      jsx('h2', { className: 'font-medium', children: t('profileBreakdown') }),
+      jsx('div', {
+        className: 'mt-3 grid gap-2 text-sm',
+        role: 'table',
+        'aria-label': t('profileBreakdown'),
+        children: profiles.map(profile => jsxs('div', {
+          className: 'grid grid-cols-[1fr_repeat(3,minmax(70px,auto))] gap-3 border-b border-(--ui-stroke-secondary) pb-2 last:border-0',
+          role: 'row',
+          children: [
+            jsx('strong', { role: 'cell', children: profile.profile }),
+            jsx('span', { role: 'cell', className: 'text-right tabular-nums', children: `${compactNumber(profile.total_tokens)} ${t('tokens')}` }),
+            jsx('span', { role: 'cell', className: 'text-right tabular-nums', children: `${compactNumber(profile.api_calls)} ${t('calls')}` }),
+            jsx('span', { role: 'cell', className: 'text-right tabular-nums', children: `${compactNumber(profile.sessions)} ${t('sessions')}` })
+          ]
+        }, profile.profile))
+      })
+    ]
+  })
+}
+
 function HistoryCard({ history, selectedBucket }) {
   const t = usePluginI18n(ID)
   const rows = history?.rows || []
@@ -505,8 +535,8 @@ function HistoryCard({ history, selectedBucket }) {
           className: 'text-xs',
           children: [
             jsxs('div', {
-              className: 'hidden grid-cols-[140px_140px_1fr_70px_110px_120px] gap-2 border-b border-(--ui-stroke-secondary) pb-2 text-(--ui-text-tertiary) md:grid',
-              children: [t('when'), t('workload'), t('modelProvider'), t('calls'), t('tokens'), t('logsRef')].map(label => jsx('span', { children: label, key: label }))
+              className: 'hidden grid-cols-[120px_100px_120px_1fr_60px_100px_110px] gap-2 border-b border-(--ui-stroke-secondary) pb-2 text-(--ui-text-tertiary) md:grid',
+              children: [t('when'), t('profile'), t('workload'), t('modelProvider'), t('calls'), t('tokens'), t('logsRef')].map(label => jsx('span', { children: label, key: label }))
             }),
             ...visibleRows.map((row, index) => {
               const band = tokenBand(row.total_tokens, t)
@@ -515,9 +545,10 @@ function HistoryCard({ history, selectedBucket }) {
                 children: label
               })
               return jsxs('div', {
-                className: 'grid grid-cols-2 gap-2 border-b border-(--ui-stroke-secondary) py-3 last:border-0 md:grid-cols-[140px_140px_1fr_70px_110px_120px]',
+                className: 'grid grid-cols-2 gap-2 border-b border-(--ui-stroke-secondary) py-3 last:border-0 md:grid-cols-[120px_100px_120px_1fr_60px_100px_110px]',
                 children: [
                   jsxs('span', { children: [mobileLabel(t('when')), formatDate(row.ended_at || row.started_at), jsx('small', { className: 'block text-(--ui-text-tertiary)', children: formatDuration(row.duration_seconds, row.is_active, t) })] }),
+                  jsxs('span', { className: 'truncate text-(--ui-text-tertiary)', children: [mobileLabel(t('profile')), row.profile || '—'] }),
                   jsxs('span', { className: 'truncate text-(--ui-text-tertiary)', children: [mobileLabel(t('workload')), workloadLabel(row, t)] }),
                   jsxs('span', { className: 'truncate', title: `${row.model || 'unknown'} · ${row.provider || 'unknown'}`, children: [mobileLabel(t('modelProvider')), `${row.model || 'unknown'} · ${row.provider || 'unknown'}`] }),
                   jsxs('span', { className: 'text-right tabular-nums', children: [mobileLabel(t('calls')), compactNumber(row.api_call_count)] }),
@@ -545,9 +576,10 @@ function UsagePage() {
   const t = usePluginI18n(ID)
   const [days, setDays] = useState(7)
   const [selectedBucket, setSelectedBucket] = useState(null)
+  const [scope, setScope] = useState('current')
   const accountQuery = useAccountSnapshot()
   const sessionQuery = useSessionUsage()
-  const historyQuery = useHistory(days, selectedBucket)
+  const historyQuery = useHistory(days, selectedBucket, scope)
   const refreshing = accountQuery.isFetching || sessionQuery.isFetching || historyQuery.isFetching
 
   return jsxs('main', {
@@ -562,21 +594,40 @@ function UsagePage() {
               jsx('p', { className: 'mt-1 text-sm text-(--ui-text-tertiary)', children: t('subtitle') })
             ]
           }),
-          jsx('button', {
-            type: 'button',
-            className: 'rounded-md border border-(--ui-stroke-secondary) px-3 py-1.5 text-xs hover:bg-(--chrome-action-hover)',
-            disabled: refreshing,
-            onClick: () => {
-              haptic('tap')
-              accountQuery.refetch()
-              sessionQuery.refetch()
-              historyQuery.refetch()
-            },
-            children: refreshing ? t('refreshing') : t('refresh')
+          jsxs('div', {
+            className: 'flex items-center gap-2',
+            children: [
+              jsxs('label', { className: 'text-xs text-(--ui-text-tertiary)', children: [
+                t('profileScope'),
+                jsxs('select', {
+                  className: 'ml-2 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1',
+                  'aria-label': t('profileScope'),
+                  value: scope,
+                  onChange: event => { setSelectedBucket(null); setScope(event.target.value) },
+                  children: [
+                    jsx('option', { value: 'current', children: t('currentProfile') }),
+                    jsx('option', { value: 'all', children: t('allProfiles') })
+                  ]
+                })
+              ] }),
+              jsx('button', {
+                type: 'button',
+                className: 'rounded-md border border-(--ui-stroke-secondary) px-3 py-1.5 text-xs hover:bg-(--chrome-action-hover)',
+                disabled: refreshing,
+                onClick: () => {
+                  haptic('tap')
+                  accountQuery.refetch()
+                  sessionQuery.refetch()
+                  historyQuery.refetch()
+                },
+                children: refreshing ? t('refreshing') : t('refresh')
+              })
+            ]
           })
         ]
       }),
       accountQuery.error ? jsx('p', { className: 'mb-3 text-sm text-(--ui-text-tertiary)', children: t('loadError') }) : null,
+      historyQuery.data?.history?.partial ? jsx('p', { className: 'mb-3 text-sm text-(--ui-accent)', role: 'status', children: t('partialWarning') }) : null,
       jsxs('div', {
         className: 'grid gap-4 xl:grid-cols-2',
         children: [
@@ -584,6 +635,10 @@ function UsagePage() {
           jsx(SessionCard, { usage: sessionQuery.data, sessionId: sessionQuery.sessionId })
         ]
       }),
+      historyQuery.data?.history?.profiles?.length ? jsx('div', {
+        className: 'mt-4',
+        children: jsx(ProfileBreakdown, { history: historyQuery.data.history })
+      }) : null,
       jsx('div', {
         className: 'mt-4',
         children: jsx(UsageChart, {
@@ -619,6 +674,13 @@ export default {
         title: 'AI usage',
         subtitle: 'Provider quota, active-session tokens, and local Hermes history.',
         accountTitle: 'Account quota',
+        sharedQuota: 'Provider quota is account-level/shared and is not allocated to profiles.',
+        profileScope: 'Profile scope',
+        currentProfile: 'Current profile',
+        allProfiles: 'All profiles',
+        profileBreakdown: 'Usage by profile',
+        profile: 'Profile',
+        partialWarning: 'Partial data: some profiles could not be read, so totals are incomplete.',
         sessionTitle: 'Active session',
         historyTitle: 'Recent usage',
         historySubtitle: 'Session-level history; no prompt content is read or displayed.',
@@ -673,6 +735,13 @@ export default {
         title: 'Consommation IA',
         subtitle: 'Quota fournisseur, tokens de la session active et historique local Hermes.',
         accountTitle: 'Quota du compte',
+        sharedQuota: 'Quota fournisseur partagé au niveau du compte ; il n’est pas attribué aux profils.',
+        profileScope: 'Périmètre des profils',
+        currentProfile: 'Profil actuel',
+        allProfiles: 'Tous les profils',
+        profileBreakdown: 'Consommation par profil',
+        profile: 'Profil',
+        partialWarning: 'Données partielles : certains profils sont illisibles et les totaux sont incomplets.',
         sessionTitle: 'Session active',
         historyTitle: 'Consommation récente',
         historySubtitle: 'Historique par session ; aucun contenu de prompt n’est lu ni affiché.',

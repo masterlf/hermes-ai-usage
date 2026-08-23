@@ -9,11 +9,12 @@ From Hermes provider adapters:
 - quota window label, utilization, remaining percentage, reset time, and bounded detail;
 - fetch timestamp and bounded account-usage details.
 
-From the active Hermes profile's `sessions` table:
+From the active Hermes profile's `sessions` table by default, or from the canonical default
+and validated named profile databases after the user explicitly selects All profiles:
 
 - raw source transiently, only to map it to an exact allowlisted `surface` enum;
 - lineage marker presence as booleans, only to derive a bounded `workload_type` enum;
-- strict profile slug, when valid;
+- database-home profile identity for All-profiles attribution (`default` or a validated slug);
 - model and billing provider;
 - start/end timestamps;
 - input, output, cache-read, cache-write, and reasoning counters;
@@ -47,7 +48,8 @@ Hermes logs, so shared Dashboard access must remain restricted.
 The plugin creates no database and writes no browser storage. It reads existing Hermes
 usage records according to the retention policy of Hermes itself. Account snapshots are
 held in process memory for 45 seconds and scoped to the active Hermes home/profile.
-History periods are limited to 90 days and session lists to 200 rows per request.
+History periods are limited to 90 days, eligible profiles to 64, and the combined session
+list to 200 rows per request. Each database query has a fixed SQLite VM-step budget.
 Selecting a chart bucket performs a bounded server query and reports `row_count` plus
 `rows_truncated` when additional matching sessions exist.
 
@@ -62,6 +64,6 @@ arbitrary outbound URL feature.
 
 Usage metadata can reveal models, activity timing, and interaction surfaces. Treat the
 Dashboard as sensitive operational tooling, enforce Hermes authentication, restrict
-network exposure, and provide access only to users authorised for the active profile.
+network exposure, and provide All-profiles access only to users authorised for every local profile.
 Safe enums, profile names, timestamps, token volume, and suffix references remain
 correlatable operational metadata; they are minimised, not anonymised.

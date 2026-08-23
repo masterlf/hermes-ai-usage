@@ -24,6 +24,8 @@ const useQuery = options => {
   if (key.includes('session')) return { data: { input: 1, output: 2, total: 3 }, refetch: () => {} };
   if (key.includes('history')) return { data: { history: {
     totals: { total_tokens: 170, api_calls: 3 },
+    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, total_tokens: 170 }],
+    partial: true,
     series: { bucket: 'day', bucket_seconds: 86400, points: [{ bucket_start: 1784851200, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }] },
     rows: [{ started_at: 1784900000, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, total_tokens: 120000, session_ref: 'abcd12345678' }]
   } }, refetch: () => {} };
@@ -43,6 +45,7 @@ const jsxs = jsx;
 ` + source.slice(bodyStart + 2);
 source = source.replace('export default {', 'globalThis.__plugin = {');
 if (!source.includes('bucket_start=')) throw new Error('Desktop bucket-specific history request missing');
+if (!source.includes("scope === 'all'") || !source.includes('&scope=all')) throw new Error('Desktop all-profile request missing');
 if (!source.includes('ResizeObserver')) throw new Error('Desktop chart is not container-aware');
 if (!source.includes("role: 'progressbar'")) throw new Error('Desktop quota progress semantics missing');
 for (const threshold of ['10_000', '50_000', '100_000', '250_000']) {
@@ -101,7 +104,9 @@ if (!rendered.includes('Log ref')) throw new Error('Desktop log reference label 
 if (!rendered.includes('abcd12345678')) throw new Error('Desktop log reference missing: ' + rendered);
 if (!rendered.includes('65% used')) throw new Error('Desktop remaining-percent fallback missing: ' + rendered);
 if (!rendered.includes('High')) throw new Error('Desktop visible token band missing: ' + rendered);
-if (!rendered.includes('CLI · Subagent · security')) throw new Error('Desktop safe workload context missing: ' + rendered);
+if (!rendered.includes('CLI · Subagent') || !rendered.includes('security')) throw new Error('Desktop profile-labelled workload missing: ' + rendered);
+if (!rendered.includes('Usage by profile') || !rendered.includes('Partial data')) throw new Error('Desktop profile breakdown/partial warning missing: ' + rendered);
+if (!rendered.includes('account-level/shared')) throw new Error('Desktop shared quota wording missing: ' + rendered);
 if (!rendered.includes('2m 05s')) throw new Error('Desktop duration missing: ' + rendered);
 const chart = findAll(tree, node => node.type === 'svg')[0];
 if (!chart || chart.props.role !== 'group' || !chart.props['aria-label']) throw new Error('Desktop chart is not a labelled accessible group');
@@ -111,7 +116,7 @@ let spacePrevented = false;
 chartBar.props.onKeyDown({ key: ' ', preventDefault: () => { spacePrevented = true; } });
 if (!spacePrevented) throw new Error('Desktop chart Space handler did not prevent page scrolling');
 const mobileLabels = findAll(tree, node => node.type === 'span' && String(node.props.className || '').includes('md:hidden')).map(flatten);
-for (const label of ['When', 'Workload', 'Model · provider', 'Calls', 'Tokens', 'Log ref']) {
+for (const label of ['When', 'Profile', 'Workload', 'Model · provider', 'Calls', 'Tokens', 'Log ref']) {
   if (!mobileLabels.includes(label)) throw new Error('Desktop mobile field label missing: ' + label);
 }
 const bandValues = findAll(tree, node => node.type === 'span' && node.props && node.props['data-token-band']);

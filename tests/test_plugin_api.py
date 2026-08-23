@@ -25,6 +25,7 @@ config_module = types.ModuleType("hermes_cli.config")
 config_module.load_config = lambda: {}
 constants_module = types.ModuleType("hermes_constants")
 constants_module.get_hermes_home = lambda: Path(tempfile.gettempdir()) / "hermes-test-home"
+constants_module.get_default_hermes_root = constants_module.get_hermes_home
 sys.modules.setdefault("agent", agent_package)
 sys.modules.setdefault("agent.account_usage", account_usage_module)
 sys.modules.setdefault("hermes_cli", hermes_cli_package)
@@ -624,6 +625,79 @@ class HistoryTests(unittest.TestCase):
             finally:
                 connection.close()
 
+    def test_all_profiles_uses_database_home_identity_and_tolerates_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profiles = root / "profiles"
+            alpha = profiles / "alpha"
+            broken = profiles / "broken"
+            alpha.mkdir(parents=True)
+            broken.mkdir()
+            self._create_current_state_db(root)
+            self._create_current_state_db(alpha)
+            (broken / "state.db").write_text("not sqlite", encoding="utf-8")
+
+            def insert(home: Path, session_id: str, tokens: int, stored_profile: str) -> None:
+                database = sqlite3.connect(home / "state.db")
+                database.execute(
+                    """INSERT INTO sessions VALUES (
+                        ?, 'cli', 'gpt-test', 'openai-codex', 1000, 1010,
+                        ?, 0, 0, 0, 0, 2, ?, NULL, NULL, NULL, 'secret title',
+                        '/secret/path', 'secret prompt', 'secret-chat'
+                    )""",
+                    (session_id, tokens, stored_profile),
+                )
+                database.commit()
+                database.close()
+
+            insert(root, "default_session_abcd12345678", 10, "spoofed")
+            insert(alpha, "alpha_session_wxyz12345678", 30, "default")
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                payload = module._all_profiles_history(7, 200)
+
+        self.assertTrue(payload["available"])
+        self.assertTrue(payload["partial"])
+        self.assertFalse(payload["totals_complete"])
+        self.assertEqual(payload["profiles_considered"], 3)
+        self.assertEqual(payload["profiles_succeeded"], 2)
+        self.assertEqual(payload["totals"]["total_tokens"], 40)
+        self.assertEqual(
+            [(item["profile"], item["total_tokens"]) for item in payload["profiles"]],
+            [("alpha", 30), ("default", 10)],
+        )
+        self.assertEqual({row["profile"] for row in payload["rows"]}, {"default", "alpha"})
+        self.assertIn(
+            {"profile": "broken", "code": "database_unavailable"},
+            payload["profile_failures"],
+        )
+        serialized = json.dumps(payload)
+        for secret in ("spoofed", "secret title", "/secret/path", "secret prompt", "secret-chat"):
+            self.assertNotIn(secret, serialized)
+
+    def test_profile_discovery_rejects_symlinks_and_invalid_slugs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profiles = root / "profiles"
+            outside = root / "outside"
+            profiles.mkdir()
+            outside.mkdir()
+            self._create_state_db(root)
+            self._create_state_db(outside)
+            (profiles / "linked").symlink_to(outside, target_is_directory=True)
+            (profiles / "UpperCase").mkdir()
+            with mock.patch.object(module, "get_default_hermes_root", lambda: root):
+                candidates, failures, truncated = module._discover_profile_databases()
+
+        self.assertEqual(
+            [(profile, path.name) for profile, path in candidates],
+            [("default", "state.db")],
+        )
+        self.assertIn({"profile": "linked", "code": "unsafe_profile_path"}, failures)
+        self.assertFalse(truncated)
+
 
 class RouteTests(unittest.TestCase):
     def test_routes_and_query_validation(self):
@@ -642,6 +716,10 @@ class RouteTests(unittest.TestCase):
         )
         self.assertEqual(
             client.get("/api/plugins/ai-usage-monitor/history?days=91&limit=30").status_code,
+            422,
+        )
+        self.assertEqual(
+            client.get("/api/plugins/ai-usage-monitor/history?scope=invalid").status_code,
             422,
         )
         self.assertEqual(

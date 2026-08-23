@@ -22,6 +22,13 @@
         refresh: "Actualiser",
         refreshing: "Actualisation…",
         account: "Quota du compte",
+        sharedQuota: "Quota fournisseur partagé au niveau du compte ; il n’est pas attribué aux profils.",
+        profileScope: "Périmètre des profils",
+        currentProfile: "Profil actuel",
+        allProfiles: "Tous les profils",
+        profileBreakdown: "Consommation par profil",
+        profile: "Profil",
+        partialWarning: "Données partielles : certains profils sont illisibles et les totaux sont incomplets.",
         unavailable: "Le fournisseur ne publie pas de quota de compte exploitable.",
         usageUnavailable: "Consommation indisponible",
         remaining: "restants",
@@ -73,6 +80,13 @@
       refresh: "Refresh",
       refreshing: "Refreshing…",
       account: "Account quota",
+      sharedQuota: "Provider quota is account-level/shared and is not allocated to profiles.",
+      profileScope: "Profile scope",
+      currentProfile: "Current profile",
+      allProfiles: "All profiles",
+      profileBreakdown: "Usage by profile",
+      profile: "Profile",
+      partialWarning: "Partial data: some profiles could not be read, so totals are incomplete.",
       unavailable: "The provider does not publish a usable account quota.",
       usageUnavailable: "Usage unavailable",
       remaining: "remaining",
@@ -191,7 +205,7 @@
     const workload = row.workload_type && !["interactive", "unknown"].includes(row.workload_type)
       ? t.workloads[row.workload_type]
       : null;
-    return [surface, workload, row.profile].filter(Boolean).join(" · ");
+    return [surface, workload].filter(Boolean).join(" · ");
   }
 
   function Stat(props) {
@@ -207,12 +221,14 @@
     if (!account || !account.available) {
       return h("section", { className: "aum-card" },
         h("h2", { className: "aum-card-title" }, t.account),
+        h("p", { className: "aum-card-meta" }, t.sharedQuota),
         h("p", { className: "aum-card-meta" }, t.unavailable)
       );
     }
 
     return h("section", { className: "aum-card" },
       h("h2", { className: "aum-card-title" }, t.account),
+      h("p", { className: "aum-card-meta" }, t.sharedQuota),
       h("p", { className: "aum-card-meta" }, account.provider + (account.plan ? " · " + account.plan : "")),
       h("div", { className: "aum-window-list" }, (account.windows || []).map(function (window, index) {
         const quota = quotaPercentages(window);
@@ -261,6 +277,33 @@
         h(Stat, { label: t.cached, value: compact(totals.cache_read_tokens) }),
         h(Stat, { label: t.total, value: compact(totals.total_tokens) })
       )
+    );
+  }
+
+  function ProfileBreakdown(props) {
+    const profiles = props.history && props.history.profiles || [];
+    if (!profiles.length) return null;
+    return h("section", { className: "aum-card aum-table-card" },
+      h("h2", { className: "aum-card-title" }, props.t.profileBreakdown),
+      h("div", { className: "aum-table-wrap" }, h("table", {
+        className: "aum-table",
+        "aria-label": props.t.profileBreakdown
+      },
+        h("thead", null, h("tr", null,
+          h("th", null, props.t.profile),
+          h("th", { className: "aum-num" }, props.t.total),
+          h("th", { className: "aum-num" }, props.t.calls),
+          h("th", { className: "aum-num" }, props.t.sessions)
+        )),
+        h("tbody", null, profiles.map(function (profile) {
+          return h("tr", { key: profile.profile },
+            h("td", null, profile.profile),
+            h("td", { className: "aum-num" }, compact(profile.total_tokens)),
+            h("td", { className: "aum-num" }, compact(profile.api_calls)),
+            h("td", { className: "aum-num" }, compact(profile.sessions))
+          );
+        }))
+      ))
     );
   }
 
@@ -419,6 +462,7 @@
         h("table", { className: "aum-table" },
           h("thead", null, h("tr", null,
             h("th", null, t.date),
+            h("th", null, t.profile),
             h("th", null, t.workload),
             h("th", null, t.model),
             h("th", { className: "aum-num" }, t.calls),
@@ -434,6 +478,7 @@
               + (row.reasoning_tokens ? " · " + t.reasoningLegend + " " + compact(row.reasoning_tokens) : "");
             return h("tr", { key: row.session_ref || (row.ended_at || row.started_at || "session") + "-" + index },
               h("td", { "data-label": t.date }, formatDate(row.ended_at || row.started_at), h("small", { className: "aum-duration" }, formatDuration(row.duration_seconds, row.is_active, t))),
+              h("td", { className: "aum-muted", "data-label": t.profile }, row.profile || "—"),
               h("td", { className: "aum-muted", "data-label": t.workload }, workloadLabel(row, t)),
               h("td", { className: "aum-model", "data-label": t.model }, (row.model || "unknown") + " · " + (row.provider || "unknown")),
               h("td", { className: "aum-num", "data-label": t.calls }, compact(row.api_call_count)),
@@ -459,6 +504,9 @@
     const periodState = React.useState(7);
     const days = periodState[0];
     const setDays = periodState[1];
+    const scopeState = React.useState("current");
+    const scope = scopeState[0];
+    const setScope = scopeState[1];
     const selectionState = React.useState(null);
     const selectedBucket = selectionState[0];
     const setSelectedBucket = selectionState[1];
@@ -468,7 +516,8 @@
       const generation = ++requestGeneration.current;
       setData(function (previous) { return Object.assign({}, previous, { refreshing: !!manual, error: false }); });
       const bucketQuery = selectedBucket === null ? "" : "&bucket_start=" + encodeURIComponent(String(selectedBucket));
-      return Promise.all([api("/snapshot?provider=auto"), api("/history?days=" + days + "&limit=200" + bucketQuery)])
+      const scopeQuery = scope === "all" ? "&scope=all" : "";
+      return Promise.all([api("/snapshot?provider=auto"), api("/history?days=" + days + "&limit=200" + scopeQuery + bucketQuery)])
         .then(function (responses) {
           if (generation !== requestGeneration.current) return;
           setData({
@@ -483,7 +532,7 @@
           if (generation !== requestGeneration.current) return;
           setData(function (previous) { return Object.assign({}, previous, { loading: false, refreshing: false, error: true }); });
         });
-    }, [days, selectedBucket]);
+    }, [days, scope, selectedBucket]);
 
     React.useEffect(function () {
       load(false);
@@ -508,6 +557,16 @@
           h("p", { className: "aum-subtitle" }, t.subtitle)
         ),
         h("div", { className: "aum-hero-actions" },
+          h("label", { className: "aum-card-meta" }, t.profileScope,
+            h("select", {
+              "aria-label": t.profileScope,
+              value: scope,
+              onChange: function (event) { setSelectedBucket(null); setScope(event.target.value); }
+            },
+              h("option", { value: "current" }, t.currentProfile),
+              h("option", { value: "all" }, t.allProfiles)
+            )
+          ),
           h("div", { className: "aum-binding" }, bindingQuota.remaining === null ? "—" : Math.round(bindingQuota.remaining) + "% " + t.remaining),
           h("button", {
             type: "button",
@@ -518,10 +577,12 @@
         )
       ),
       data.error ? h("div", { className: "aum-error", role: "alert" }, t.error) : null,
+      data.history && data.history.partial ? h("div", { className: "aum-warning", role: "status" }, t.partialWarning) : null,
       h("div", { className: "aum-grid" },
         h(AccountCard, { account: data.account, t: t }),
         h(StatsCard, { history: data.history, t: t, days: days })
       ),
+      h(ProfileBreakdown, { history: data.history, t: t }),
       h(UsageChart, {
         history: data.history,
         t: t,
