@@ -81,7 +81,7 @@
   .aum-stats { grid-template-columns: 1fr; }
   .aum-period { min-height: 44px; min-width: 44px; }
   .aum-periods { overflow-x: auto; }
-  .aum-table thead { display: none; }
+  .aum-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .aum-table, .aum-table tbody, .aum-table tr, .aum-table td { display: block; width: 100%; }
   .aum-table tbody { display: grid; gap: .75rem; padding: .75rem; }
   .aum-table tr { border: 1px solid var(--color-border); padding: .7rem; }

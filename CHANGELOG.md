@@ -5,8 +5,6 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-08-23
-
 ### Added
 
 - Explicit current-profile/All-profiles controls in Desktop and Web Dashboard for
@@ -81,8 +79,7 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only provider-quota snapshots and seven-day token history.
 - French and English UI text.
 
-[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.5.0
+[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.4.0
 [0.3.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.3.0
 [0.2.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.2.1

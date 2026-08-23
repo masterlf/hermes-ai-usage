@@ -49,7 +49,11 @@ The plugin creates no database and writes no browser storage. It reads existing 
 usage records according to the retention policy of Hermes itself. Account snapshots are
 held in process memory for 45 seconds and scoped to the active Hermes home/profile.
 History periods are limited to 90 days, eligible profiles to 64, and the combined session
-list to 200 rows per request. Each database query has a fixed SQLite VM-step budget.
+list to 200 rows per request. Raw profile-directory enumeration and the transient per-profile
+session-identity integrity scan have fixed ceilings. Each database query has a fixed SQLite
+VM-step budget. Duplicate physical databases are queried once. Distinct databases sharing a
+full session ID are all excluded from the aggregate and reported as partial; the full ID is
+never returned or logged.
 Selecting a chart bucket performs a bounded server query and reports `row_count` plus
 `rows_truncated` when additional matching sessions exist.
 

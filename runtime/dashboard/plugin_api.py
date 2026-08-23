@@ -14,6 +14,7 @@ import threading
 import time
 import unicodedata
 from datetime import UTC, datetime
+from itertools import islice
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -44,6 +45,8 @@ _TOTAL_TOKEN_FIELDS = (
 _TOKEN_FIELDS = (*_TOTAL_TOKEN_FIELDS, "reasoning_tokens")
 _MAX_SESSION_DURATION_SECONDS = 365 * 86400
 _MAX_PROFILES = 64
+_MAX_PROFILE_SCAN_ENTRIES = 256
+_MAX_SESSION_IDENTITIES = 10_000
 _SQL_PROGRESS_STEPS = 2_000_000
 _REQUIRED_SESSION_COLUMNS = frozenset(
     {
@@ -268,6 +271,7 @@ def _discover_profile_databases() -> tuple[list[tuple[str, Path]], list[dict[str
     """Return root-owned profile databases without following profile symlinks."""
     failures: list[dict[str, Any]] = []
     candidates: list[tuple[str, Path]] = []
+    database_identities: set[tuple[int, int]] = set()
     try:
         root = Path(get_default_hermes_root()).resolve(strict=True)
         if not root.is_dir():
@@ -292,22 +296,37 @@ def _discover_profile_databases() -> tuple[list[tuple[str, Path]], list[dict[str
         except (OSError, RuntimeError, ValueError):
             failures.append({"profile": profile, "code": "unsafe_profile_path"})
         else:
+            database_identity = (db_stat.st_dev, db_stat.st_ino)
+            if database_identity in database_identities:
+                failures.append({"profile": profile, "code": "duplicate_database_identity"})
+                return
+            database_identities.add(database_identity)
             candidates.append((profile, db_path))
 
     add_candidate("default", root)
     profiles_root = root / "profiles"
+    scan_truncated = False
     try:
         profiles_stat = profiles_root.lstat()
         if stat.S_ISLNK(profiles_stat.st_mode) or not stat.S_ISDIR(profiles_stat.st_mode):
             raise OSError("unsafe profiles root")
         if profiles_root.resolve(strict=True) != profiles_root:
             raise OSError("canonical mismatch")
-        entries = sorted(profiles_root.iterdir(), key=lambda entry: entry.name)
+        entries = list(islice(profiles_root.iterdir(), _MAX_PROFILE_SCAN_ENTRIES + 1))
+        scan_truncated = len(entries) > _MAX_PROFILE_SCAN_ENTRIES
+        entries = sorted(
+            entries[:_MAX_PROFILE_SCAN_ENTRIES],
+            key=lambda entry: entry.name,
+        )
     except FileNotFoundError:
         entries = []
     except (OSError, RuntimeError, ValueError):
         failures.append({"profile": None, "code": "profiles_directory_unavailable"})
         entries = []
+        scan_truncated = False
+
+    if scan_truncated:
+        failures.append({"profile": None, "code": "profiles_directory_truncated"})
 
     eligible = [
         entry
@@ -315,10 +334,46 @@ def _discover_profile_databases() -> tuple[list[tuple[str, Path]], list[dict[str
         if _PROFILE_HOME_RE.fullmatch(entry.name) and entry.name != "default"
     ]
     slots = max(0, _MAX_PROFILES - 1)
-    truncated = len(eligible) > slots
+    truncated = scan_truncated or len(eligible) > slots
     for home in eligible[:slots]:
         add_candidate(home.name, home)
     return candidates, failures, truncated
+
+
+def _session_identities(db_path: Path, days: int) -> tuple[set[str] | None, str | None]:
+    """Read bounded full IDs transiently so copied histories fail closed."""
+    now = time.time()
+    cutoff = now - (days * 86400)
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = _readonly_connection(db_path)
+        columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(sessions)")}
+        if not _REQUIRED_SESSION_COLUMNS.issubset(columns):
+            raise sqlite3.OperationalError("unsupported sessions schema")
+        rows = connection.execute(
+            """SELECT id
+               FROM sessions
+               WHERE COALESCE(ended_at, started_at) >= ?
+                 AND COALESCE(ended_at, started_at) <= ?
+                 AND (
+                     MAX(COALESCE(input_tokens, 0), 0)
+                     + MAX(COALESCE(output_tokens, 0), 0)
+                     + MAX(COALESCE(cache_read_tokens, 0), 0)
+                     + MAX(COALESCE(cache_write_tokens, 0), 0)
+                 ) > 0
+               ORDER BY id
+               LIMIT ?""",
+            (cutoff, now, _MAX_SESSION_IDENTITIES + 1),
+        ).fetchall()
+        if len(rows) > _MAX_SESSION_IDENTITIES:
+            return None, "session_identity_scan_truncated"
+        return {str(row["id"] or "") for row in rows}, None
+    except (sqlite3.Error, OSError) as exc:
+        logger.warning("Session identity scan failed (%s)", type(exc).__name__)
+        return None, "database_unavailable"
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def _session_references(
@@ -730,8 +785,39 @@ def _token_history(
 def _all_profiles_history(days: int, limit: int, bucket_start: int | None = None) -> dict[str, Any]:
     candidates, failures, profiles_truncated = _discover_profile_databases()
     profiles_considered = len(candidates) + len(failures)
-    healthy: list[tuple[str, dict[str, Any]]] = []
+    identity_sets: dict[str, set[str]] = {}
+    verified_candidates: list[tuple[str, Path]] = []
     for profile, db_path in candidates:
+        identities, failure_code = _session_identities(db_path, days)
+        if failure_code:
+            failures.append({"profile": profile, "code": failure_code})
+        else:
+            identity_sets[profile] = identities or set()
+            verified_candidates.append((profile, db_path))
+
+    identity_owners: dict[str, list[str]] = {}
+    for profile, identities in identity_sets.items():
+        for session_id in identities:
+            identity_owners.setdefault(session_id, []).append(profile)
+    ambiguous_profiles = {
+        profile
+        for owners in identity_owners.values()
+        if len(owners) > 1
+        for profile in owners
+    }
+    if ambiguous_profiles:
+        failures.extend(
+            {"profile": profile, "code": "duplicate_session_identity"}
+            for profile in sorted(ambiguous_profiles)
+        )
+        verified_candidates = [
+            candidate
+            for candidate in verified_candidates
+            if candidate[0] not in ambiguous_profiles
+        ]
+
+    healthy: list[tuple[str, dict[str, Any]]] = []
+    for profile, db_path in verified_candidates:
         payload = _token_history(
             days,
             min(limit + 1, 201),

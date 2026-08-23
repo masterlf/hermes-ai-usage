@@ -474,20 +474,26 @@ function ProfileBreakdown({ history }) {
     className: 'rounded-md border border-(--ui-stroke-secondary) p-3',
     children: [
       jsx('h2', { className: 'font-medium', children: t('profileBreakdown') }),
-      jsx('div', {
-        className: 'mt-3 grid gap-2 text-sm',
-        role: 'table',
+      jsxs('table', {
+        className: 'mt-3 w-full text-sm',
         'aria-label': t('profileBreakdown'),
-        children: profiles.map(profile => jsxs('div', {
-          className: 'grid grid-cols-[1fr_repeat(3,minmax(70px,auto))] gap-3 border-b border-(--ui-stroke-secondary) pb-2 last:border-0',
-          role: 'row',
-          children: [
-            jsx('strong', { role: 'cell', children: profile.profile }),
-            jsx('span', { role: 'cell', className: 'text-right tabular-nums', children: `${compactNumber(profile.total_tokens)} ${t('tokens')}` }),
-            jsx('span', { role: 'cell', className: 'text-right tabular-nums', children: `${compactNumber(profile.api_calls)} ${t('calls')}` }),
-            jsx('span', { role: 'cell', className: 'text-right tabular-nums', children: `${compactNumber(profile.sessions)} ${t('sessions')}` })
-          ]
-        }, profile.profile))
+        children: [
+          jsx('thead', { children: jsxs('tr', { children: [
+            jsx('th', { scope: 'col', className: 'pb-2 text-left font-medium', children: t('profile') }),
+            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('tokens') }),
+            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('calls') }),
+            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('sessions') })
+          ] }) }),
+          jsx('tbody', { children: profiles.map(profile => jsxs('tr', {
+            className: 'border-t border-(--ui-stroke-secondary)',
+            children: [
+              jsx('th', { scope: 'row', className: 'py-2 text-left font-medium', children: profile.profile }),
+              jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(profile.total_tokens) }),
+              jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(profile.api_calls) }),
+              jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(profile.sessions) })
+            ]
+          }, profile.profile)) })
+        ]
       })
     ]
   })

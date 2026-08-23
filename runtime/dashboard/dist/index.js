@@ -297,10 +297,10 @@
         )),
         h("tbody", null, profiles.map(function (profile) {
           return h("tr", { key: profile.profile },
-            h("td", null, profile.profile),
-            h("td", { className: "aum-num" }, compact(profile.total_tokens)),
-            h("td", { className: "aum-num" }, compact(profile.api_calls)),
-            h("td", { className: "aum-num" }, compact(profile.sessions))
+            h("td", { "data-label": props.t.profile }, profile.profile),
+            h("td", { className: "aum-num", "data-label": props.t.total }, compact(profile.total_tokens)),
+            h("td", { className: "aum-num", "data-label": props.t.calls }, compact(profile.api_calls)),
+            h("td", { className: "aum-num", "data-label": props.t.sessions }, compact(profile.sessions))
           );
         }))
       ))

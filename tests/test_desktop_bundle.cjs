@@ -106,6 +106,12 @@ if (!rendered.includes('65% used')) throw new Error('Desktop remaining-percent f
 if (!rendered.includes('High')) throw new Error('Desktop visible token band missing: ' + rendered);
 if (!rendered.includes('CLI · Subagent') || !rendered.includes('security')) throw new Error('Desktop profile-labelled workload missing: ' + rendered);
 if (!rendered.includes('Usage by profile') || !rendered.includes('Partial data')) throw new Error('Desktop profile breakdown/partial warning missing: ' + rendered);
+const profileTable = findAll(tree, node => node.type === 'table' && node.props && node.props['aria-label'] === 'Usage by profile')[0];
+if (!profileTable) throw new Error('Desktop profile breakdown is not a native labelled table');
+const profileHeaders = findAll(profileTable, node => node.type === 'th').map(flatten);
+for (const header of ['Profile', 'Tokens', 'Calls', 'sessions']) {
+  if (!profileHeaders.includes(header)) throw new Error('Desktop profile table header missing: ' + header);
+}
 if (!rendered.includes('account-level/shared')) throw new Error('Desktop shared quota wording missing: ' + rendered);
 if (!rendered.includes('2m 05s')) throw new Error('Desktop duration missing: ' + rendered);
 const chart = findAll(tree, node => node.type === 'svg')[0];

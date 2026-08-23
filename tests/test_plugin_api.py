@@ -698,6 +698,177 @@ class HistoryTests(unittest.TestCase):
         self.assertIn({"profile": "linked", "code": "unsafe_profile_path"}, failures)
         self.assertFalse(truncated)
 
+    def test_profile_discovery_rejects_duplicate_hardlinked_database_before_query(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            alpha = root / "profiles" / "alpha"
+            alpha.mkdir(parents=True)
+            self._create_state_db(root)
+            (alpha / "state.db").hardlink_to(root / "state.db")
+
+            original_connection = module._readonly_connection
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module.time, "time", return_value=1100),
+                mock.patch.object(
+                    module,
+                    "_readonly_connection",
+                    wraps=original_connection,
+                ) as readonly_connection,
+            ):
+                payload = module._all_profiles_history(7, 200)
+
+        self.assertEqual(readonly_connection.call_count, 2)
+        self.assertTrue(payload["partial"])
+        self.assertFalse(payload["totals_complete"])
+        self.assertEqual([item["profile"] for item in payload["profiles"]], ["default"])
+        self.assertIn(
+            {"profile": "alpha", "code": "duplicate_database_identity"},
+            payload["profile_failures"],
+        )
+
+    def test_all_profiles_excludes_every_database_with_duplicate_full_session_id(self):
+        duplicate_id = "copied_history_secret_abcd12345678"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            alpha = root / "profiles" / "alpha"
+            alpha.mkdir(parents=True)
+            self._create_state_db(root)
+            self._create_state_db(alpha)
+            for home, tokens in ((root, 10), (alpha, 30)):
+                database = sqlite3.connect(home / "state.db")
+                database.execute(
+                    """INSERT INTO sessions VALUES (
+                        ?, 'cli', 'gpt-test', 'openai-codex', 1000, 1010,
+                        ?, 0, 0, 0, 0, 1, NULL, 0.0, 'estimated'
+                    )""",
+                    (duplicate_id, tokens),
+                )
+                database.commit()
+                database.close()
+
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                payload = module._all_profiles_history(7, 200)
+
+        self.assertFalse(payload["available"])
+        self.assertTrue(payload["partial"])
+        self.assertFalse(payload["totals_complete"])
+        self.assertEqual(payload["totals"], {})
+        self.assertEqual(payload["profiles"], [])
+        self.assertEqual(
+            payload["profile_failures"],
+            [
+                {"profile": "alpha", "code": "duplicate_session_identity"},
+                {"profile": "default", "code": "duplicate_session_identity"},
+            ],
+        )
+        self.assertNotIn(duplicate_id, json.dumps(payload))
+
+    def test_profile_directory_raw_scan_is_bounded_for_valid_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profiles = root / "profiles"
+            profiles.mkdir()
+            self._create_state_db(root)
+            for name in ("charlie", "alpha", "bravo", "delta"):
+                home = profiles / name
+                home.mkdir()
+                self._create_state_db(home)
+
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module, "_MAX_PROFILE_SCAN_ENTRIES", 3),
+            ):
+                candidates, failures, truncated = module._discover_profile_databases()
+
+        accepted = [profile for profile, _path in candidates]
+        self.assertEqual(accepted[0], "default")
+        self.assertEqual(accepted[1:], sorted(accepted[1:]))
+        self.assertEqual(len(accepted), 4)
+        self.assertEqual(failures, [{"profile": None, "code": "profiles_directory_truncated"}])
+        self.assertTrue(truncated)
+
+    def test_profile_directory_raw_scan_is_bounded_for_invalid_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profiles = root / "profiles"
+            profiles.mkdir()
+            self._create_state_db(root)
+            for name in ("InvalidA", "InvalidB", "InvalidC", "InvalidD"):
+                (profiles / name).mkdir()
+
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module, "_MAX_PROFILE_SCAN_ENTRIES", 3),
+            ):
+                candidates, failures, truncated = module._discover_profile_databases()
+
+        self.assertEqual([profile for profile, _path in candidates], ["default"])
+        self.assertEqual(failures, [{"profile": None, "code": "profiles_directory_truncated"}])
+        self.assertTrue(truncated)
+
+    def test_all_profiles_fails_closed_when_session_identity_scan_is_truncated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._create_state_db(root)
+            database = sqlite3.connect(root / "state.db")
+            database.executemany(
+                """INSERT INTO sessions VALUES (
+                    ?, 'cli', 'gpt-test', 'openai-codex', 1000, 1010,
+                    1, 0, 0, 0, 0, 1, NULL, 0.0, 'estimated'
+                )""",
+                [("bounded_scan_alpha12345678",), ("bounded_scan_bravo12345678",)],
+            )
+            database.commit()
+            database.close()
+
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module, "_MAX_SESSION_IDENTITIES", 1),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                payload = module._all_profiles_history(7, 200)
+
+        self.assertFalse(payload["available"])
+        self.assertEqual(
+            payload["profile_failures"],
+            [{"profile": "default", "code": "session_identity_scan_truncated"}],
+        )
+
+    def test_all_profiles_merge_is_globally_bounded_and_deterministic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            alpha = root / "profiles" / "alpha"
+            alpha.mkdir(parents=True)
+            self._create_state_db(root)
+            self._create_state_db(alpha)
+            for profile, home in (("default", root), ("alpha", alpha)):
+                database = sqlite3.connect(home / "state.db")
+                database.executemany(
+                    """INSERT INTO sessions VALUES (
+                        ?, 'cli', 'gpt-test', 'openai-codex', 1000, 1010,
+                        1, 0, 0, 0, 0, 1, NULL, 0.0, 'estimated'
+                    )""",
+                    [(f"{profile}_{index:04d}_session_12345678",) for index in range(150)],
+                )
+                database.commit()
+                database.close()
+
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                payload = module._all_profiles_history(7, 200)
+
+        self.assertEqual(payload["row_count"], 300)
+        self.assertEqual(len(payload["rows"]), 200)
+        self.assertTrue(payload["rows_truncated"])
+        self.assertEqual([row["profile"] for row in payload["rows"][:150]], ["alpha"] * 150)
+        self.assertEqual([row["profile"] for row in payload["rows"][150:]], ["default"] * 50)
+
 
 class RouteTests(unittest.TestCase):
     def test_routes_and_query_validation(self):

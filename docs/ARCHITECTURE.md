@@ -20,7 +20,10 @@ The backend:
 - serializes a bounded allowlist of quota fields;
 - preserves active-profile reads by default and adds an explicit `scope=all` aggregation;
 - discovers only the canonical default home and direct strict-slug named profile homes,
-  rejecting symlinked/non-regular databases and canonical path escapes;
+  rejecting symlinked/non-regular databases, canonical path escapes, and duplicate physical
+  databases identified by device/inode before any query;
+- bounds raw profile-directory enumeration before sorting or filtering and reports
+  truncation through fixed failure metadata;
 - opens every eligible `state.db` independently using SQLite URI `mode=ro`;
 - enforces and verifies `PRAGMA query_only=ON` and a per-database VM-step budget;
 - selects only usage metadata and counters from `sessions`;
@@ -34,6 +37,9 @@ The backend:
 - never selects session titles, paths, prompts, chat identifiers, or raw lineage values;
 - derives a collision-aware session suffix and removes the complete identifier before
   serialization;
+- transiently compares a bounded set of full session IDs across databases; if an ID occurs
+  in more than one physical database, every affected database is excluded and reported as
+  partial because profile ownership cannot be proven;
 - returns generic failures while logging only exception classes.
 
 ### Hermes Web Dashboard

@@ -37,11 +37,11 @@
 | Credential exposure | Hermes account adapters; no credential parameters or response fields; error redaction |
 | Prompt/transcript disclosure | Static SQL allowlist; no message-table access; security invariant and regression tests |
 | State mutation | SQLite `mode=ro`; `query_only`; GET-only router; mutation test |
-| Cross-profile leakage | current scope remains default; canonical root; strict slugs; no symlink following; DB-home attribution; profile-isolation tests |
+| Cross-profile leakage | current scope remains default; canonical root; strict slugs; no symlink following; physical-DB deduplication; fail-closed duplicate-session detection; DB-home attribution; profile-isolation tests |
 | SQL injection | static SQL with bound numeric parameters; FastAPI validation |
 | XSS / DOM injection | React text rendering; bounded strings; prohibited raw-HTML/eval sinks |
 | Browser credential leakage | host SDK clients only; no custom Authorization/cookies/storage/direct fetch |
-| Query DoS | bounded `days`, profile count and combined rows; SQLite VM-step budget and timeout; provider cache |
+| Query DoS | bounded `days`, raw directory scan, profile/session-identity counts and combined rows; SQLite VM-step budget and timeout; provider cache |
 | Session correlation leakage | complete IDs removed before serialization; bounded collision-aware suffix; authenticated host surfaces only |
 | Confidential source/title semantics | exact surface enum; raw source/title never serialized; complete-payload regressions |
 | Lineage leakage/misclassification | category-only marker checks; branch/compression distinction; fail closed to `unknown` |
