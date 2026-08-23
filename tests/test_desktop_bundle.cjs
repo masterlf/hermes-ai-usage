@@ -33,7 +33,18 @@ const useQuery = options => {
 };
 const useValue = value => value;
 let stateCall = 0;
+let statefulMode = false;
+let componentStates = [];
+globalThis.__setHarnessStateful = value => { statefulMode = value; stateCall = 0; componentStates = []; };
+globalThis.__resetHarnessCursor = () => { stateCall = 0; };
 const useState = initial => {
+  if (statefulMode) {
+    const index = stateCall++;
+    if (componentStates[index] === undefined) componentStates[index] = initial;
+    return [componentStates[index], update => {
+      componentStates[index] = typeof update === 'function' ? update(componentStates[index]) : update;
+    }];
+  }
   stateCall += 1;
   if (stateCall === 2) return [1784851200, () => {}];
   return [initial, () => {}];
@@ -43,7 +54,7 @@ const useEffect = () => {};
 const jsx = (type, props) => ({ type, props });
 const jsxs = jsx;
 ` + source.slice(bodyStart + 2);
-source = source.replace('export default {', 'globalThis.__plugin = {');
+source = source.replace('export default {', 'globalThis.__compositionOf = compositionOf; globalThis.__UsageChart = UsageChart; globalThis.__plugin = {');
 if (!source.includes('bucket_start=')) throw new Error('Desktop bucket-specific history request missing');
 if (!source.includes("scope === 'all'") || !source.includes('&scope=all')) throw new Error('Desktop all-profile request missing');
 if (!source.includes('ResizeObserver')) throw new Error('Desktop chart is not container-aware');
@@ -51,8 +62,30 @@ if (!source.includes("role: 'progressbar'")) throw new Error('Desktop quota prog
 for (const threshold of ['10_000', '50_000', '100_000', '250_000']) {
   if (!source.includes(threshold)) throw new Error('Desktop token-band threshold missing: ' + threshold);
 }
-const sandbox = { globalThis: {}, Intl, Number, Date, Math, Promise, console };
+const sandbox = { globalThis: {}, document: { documentElement: { lang: 'fr' } }, navigator: { language: 'en-US' }, Intl, Number, Date, Math, Promise, console };
 vm.runInNewContext(source, sandbox);
+const compositionOf = sandbox.globalThis.__compositionOf;
+if (typeof compositionOf !== 'function') throw new Error('Desktop composition helper missing');
+const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
+if (normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('Desktop composition math is incorrect');
+if (normal.shareTenths.join(',') !== '100,200,600,100') throw new Error('Desktop top-level ratios are incorrect: ' + normal.shareTenths);
+const thirds = compositionOf({ input_tokens: 1, output_tokens: 1, cache_read_tokens: 1 });
+if (thirds.shareTenths.reduce((sum, value) => sum + value, 0) !== 1000) throw new Error('Desktop displayed ratios do not total 100.0%');
+const hostile = compositionOf({ input_tokens: -1, output_tokens: 2, reasoning_tokens: 99, cache_read_tokens: Infinity, cache_write_tokens: NaN });
+if (hostile.additiveTotal !== 2 || hostile.reasoning !== 2 || hostile.outputNonReasoning !== 0) throw new Error('Desktop hostile values were not normalized');
+const zero = compositionOf({});
+if (zero.additiveTotal !== 0 || zero.shareTenths.some(value => value !== 0) || zero.reasoningOutputTenths !== 0) throw new Error('Desktop zero composition is not finite');
+const tiny = compositionOf({ input_tokens: 100, output_tokens: 100, cache_read_tokens: 99000, cache_write_tokens: 1 });
+if (tiny.additiveTotal !== 99201 || tiny.cacheWrite !== 1) throw new Error('Desktop tiny/huge-cache composition lost exact values');
+const overflow = compositionOf({ input_tokens: Number.MAX_VALUE, output_tokens: Number.MAX_VALUE, cache_read_tokens: Number.MAX_VALUE, cache_write_tokens: Number.MAX_VALUE, reasoning_tokens: Number.MAX_VALUE });
+if (!Number.isFinite(overflow.additiveTotal) || overflow.shareTenths.some(value => !Number.isFinite(value))) throw new Error('Desktop aggregate overflow was not bounded');
+if (overflow.shareTenths.reduce((sum, value) => sum + value, 0) !== 1000) throw new Error('Desktop bounded overflow ratios do not total 100.0%');
+const relativeLuminance = color => {
+  const linear = color.slice(1).match(/.{2}/g).map(channel => parseInt(channel, 16) / 255).map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+};
+const focusContrast = (relativeLuminance('#5AD4FF') + 0.05) / (relativeLuminance('#082522') + 0.05);
+if (focusContrast < 3 || !source.includes('var(--ui-accent, #5AD4FF)')) throw new Error('Desktop focus ring fallback is below 3:1 or missing');
 const plugin = sandbox.globalThis.__plugin;
 if (!plugin || plugin.id !== 'ai-usage-monitor') throw new Error('desktop plugin export missing');
 let contributions;
@@ -94,10 +127,48 @@ function resolveTree(node) {
     props: { ...(node.props || {}), children: resolveTree(node.props && node.props.children) }
   };
 }
+const chartHistory = { series: { bucket: 'day', points: [
+  { bucket_start: 1784851200, sessions: 2, api_calls: 3, input_tokens: 12345, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5 },
+  { bucket_start: 1784937600, sessions: 1, api_calls: 1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 99990, cache_write_tokens: 1, reasoning_tokens: 2 },
+  { bucket_start: 1785024000, sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0 }
+] } };
+const UsageChart = sandbox.globalThis.__UsageChart;
+if (typeof UsageChart !== 'function') throw new Error('Desktop UsageChart test export missing');
+sandbox.globalThis.__setHarnessStateful(true);
+function renderChart() {
+  sandbox.globalThis.__resetHarnessCursor();
+  return resolveTree(UsageChart({ history: chartHistory, days: 7, selectedBucket: null, onDays: () => {}, onSelect: () => {} }));
+}
+let interactionChart = findAll(renderChart(), node => node.type === 'svg')[0];
+let interactionBars = findAll(interactionChart, node => node.type === 'g' && node.props.role === 'button');
+if (interactionBars.length !== 3) throw new Error('Desktop multi-bucket fixture did not render three interactive bars');
+if (!interactionBars[0].props['aria-label'].includes(new Intl.NumberFormat('fr').format(12345))) throw new Error('Desktop exact values did not use active French locale');
+const navigate = (bar, key) => {
+  let focused = null;
+  const targets = interactionBars.map((_, index) => ({ focus: () => { focused = index; } }));
+  bar.props.onKeyDown({ key, preventDefault: () => {}, currentTarget: { ownerSVGElement: { querySelectorAll: () => targets } } });
+  interactionChart = findAll(renderChart(), node => node.type === 'svg')[0];
+  interactionBars = findAll(interactionChart, node => node.type === 'g' && node.props.role === 'button');
+  return focused;
+};
+if (navigate(interactionBars[0], 'ArrowRight') !== 1 || interactionBars.map(bar => bar.props.tabIndex).join(',') !== '-1,0,-1') throw new Error('Desktop ArrowRight did not transfer roving tab ownership');
+if (navigate(interactionBars[1], 'End') !== 2 || interactionBars.map(bar => bar.props.tabIndex).join(',') !== '-1,-1,0') throw new Error('Desktop End did not transfer roving tab ownership');
+if (navigate(interactionBars[2], 'Home') !== 0 || interactionBars.map(bar => bar.props.tabIndex).join(',') !== '0,-1,-1') throw new Error('Desktop Home did not transfer roving tab ownership');
+if (navigate(interactionBars[0], 'ArrowLeft') !== 0 || interactionBars.map(bar => bar.props.tabIndex).join(',') !== '0,-1,-1') throw new Error('Desktop ArrowLeft boundary ownership failed');
+interactionBars[1].props.onFocus();
+interactionChart = findAll(renderChart(), node => node.type === 'svg')[0];
+interactionBars = findAll(interactionChart, node => node.type === 'g' && node.props.role === 'button');
+if (interactionBars.map(bar => bar.props.tabIndex).join(',') !== '-1,0,-1') throw new Error('Desktop rerender/tab-return lost the last focused bucket');
+const focusOutline = findAll(interactionBars[1], node => node.type === 'rect' && node.props && node.props['data-focus-outline'])[0];
+if (!focusOutline || focusOutline.props.stroke === 'transparent') throw new Error('Desktop focused unselected bucket lacks an independent visible ring');
+if (!source.includes('max-[720px]:min-h-11') || !source.includes('max-[720px]:min-w-11')) throw new Error('Desktop narrow period targets are not durably 44x44');
+if (!source.includes("forcedColorAdjust: 'auto'")) throw new Error('Desktop forced-colors focus handling missing');
+sandbox.globalThis.__setHarnessStateful(false);
 const page = (contributions || []).find(item => item.id === 'page');
 const tree = resolveTree(page.render());
 const rendered = flatten(tree);
 if (!rendered.includes('Token usage')) throw new Error('Desktop usage chart missing: ' + rendered);
+if (!rendered.includes('Period composition') || !rendered.includes('Reasoning (within output)')) throw new Error('Desktop composition summary missing: ' + rendered);
 if (!rendered.includes('Selected bucket sessions')) throw new Error('Desktop selected-bucket subtitle missing: ' + rendered);
 if (!rendered.includes('Period total: 170 tok · 3 calls')) throw new Error('Desktop period totals scope missing: ' + rendered);
 if (!rendered.includes('Log ref')) throw new Error('Desktop log reference label missing: ' + rendered);
@@ -118,6 +189,12 @@ const chart = findAll(tree, node => node.type === 'svg')[0];
 if (!chart || chart.props.role !== 'group' || !chart.props['aria-label']) throw new Error('Desktop chart is not a labelled accessible group');
 const chartBar = findAll(chart, node => node.type === 'g' && node.props.role === 'button')[0];
 if (!chartBar || chartBar.props['aria-pressed'] !== true) throw new Error('Desktop chart bar selected state missing');
+if (chartBar.props.tabIndex !== 0 || !chartBar.props['aria-label'].includes('within output')) throw new Error('Desktop roving focus/accessibility label missing');
+if (typeof chartBar.props.onFocus !== 'function' || typeof chartBar.props.onMouseEnter !== 'function') throw new Error('Desktop focus/hover breakdown handlers missing');
+const desktopPeriodGroup = findAll(tree, node => node.props && node.props.role === 'group' && node.props['aria-label'] === 'Token usage period')[0];
+if (!desktopPeriodGroup || findAll(desktopPeriodGroup, node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean').length !== 4) throw new Error('Desktop period button semantics missing');
+const desktopLegend = findAll(tree, node => node.type === 'div' && String(node.props.className || '').includes('flex flex-wrap'))[0];
+if (!desktopLegend || findAll(desktopLegend, node => node.type === 'i').length !== 5) throw new Error('Desktop five labelled legend swatches missing');
 let spacePrevented = false;
 chartBar.props.onKeyDown({ key: ' ', preventDefault: () => { spacePrevented = true; } });
 if (!spacePrevented) throw new Error('Desktop chart Space handler did not prevent page scrolling');
@@ -127,8 +204,10 @@ for (const label of ['When', 'Profile', 'Workload', 'Model · provider', 'Calls'
 }
 const bandValues = findAll(tree, node => node.type === 'span' && node.props && node.props['data-token-band']);
 if (!bandValues.length || bandValues[0].props.style.color !== 'var(--ui-text-primary)') throw new Error('Desktop token-band text is not theme-safe');
+if (!bandValues[0].props['aria-label'].includes(new Intl.NumberFormat('fr').format(120000))) throw new Error('Desktop history exact value did not use active French locale');
 sandbox.globalThis.__locale = 'fr';
 const frenchRendered = flatten(page.render());
 if (!frenchRendered.includes('2 min 05 s')) throw new Error('French Desktop duration was not localized: ' + frenchRendered);
+if (!frenchRendered.includes('Composition de la période') || !frenchRendered.includes('Raisonnement (dans la sortie)')) throw new Error('French Desktop composition copy missing: ' + frenchRendered);
 if (rendered.includes('1970')) throw new Error('Desktop Unix seconds were rendered as milliseconds: ' + rendered);
 console.log('desktop bundle smoke: ok');

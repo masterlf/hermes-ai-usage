@@ -25,6 +25,8 @@ It never reads prompt or message content.
 - active-session token and context counters in Hermes Desktop;
 - selectable 24-hour, 7-day, 30-day, and 90-day container-aware UTC chart that retains
   every returned hourly/daily bucket and scrolls only when buckets reach their minimum width;
+- selected-period token composition with exact and percentage breakdowns, a multi-color
+  linear timeline, and hatched reasoning visibly nested within output rather than double counted;
 - session history with provider, model, safe surface/workload enums, strict profile slug,
   validated duration/active state, calls, five visible token-consumption bands, and a short
   reference that can be searched in retained Hermes logs;

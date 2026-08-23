@@ -7,6 +7,7 @@
 
   const React = SDK.React;
   const h = React.createElement;
+  let chartInstance = 0;
 
   function api(path) {
     return SDK.fetchJSON("/api/plugins/ai-usage-monitor" + path);
@@ -43,6 +44,13 @@
         total: "Tokens bruts",
         chart: "Utilisation des tokens",
         chartHint: "Créneaux UTC · clique sur une barre pour isoler les sessions correspondantes.",
+        periodComposition: "Composition de la période",
+        periodTotal: function (total, start, end) { return total + " tokens · du " + start + " au " + end + " UTC"; },
+        periodGroup: "Période d’utilisation des tokens",
+        reasoningShare: function (percent, value) { return "Raisonnement " + percent + " de la sortie · " + value; },
+        bucketBreakdown: function (date) { return "Répartition des tokens pour le " + date + " UTC"; },
+        emptyComposition: "Aucun token utilisé sur cette période.",
+        ofOutput: "de la sortie",
         inputLegend: "Entrée",
         outputLegend: "Sortie",
         reasoningLegend: "Raisonnement (dans la sortie)",
@@ -101,6 +109,13 @@
       total: "Raw tokens",
       chart: "Token usage",
       chartHint: "UTC buckets · select a bar to isolate the matching sessions.",
+      periodComposition: "Period composition",
+      periodTotal: function (total, start, end) { return total + " tokens · " + start + "–" + end + " UTC"; },
+      periodGroup: "Token usage period",
+      reasoningShare: function (percent, value) { return "Reasoning " + percent + " of output · " + value; },
+      bucketBreakdown: function (date) { return "Token breakdown for " + date + " UTC"; },
+      emptyComposition: "No token usage in this period.",
+      ofOutput: "of output",
       inputLegend: "Input",
       outputLegend: "Output",
       reasoningLegend: "Reasoning (within output)",
@@ -137,7 +152,44 @@
     if (n >= 1000000000) return (n / 1000000000).toFixed(1) + "B";
     if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
     if (n >= 1000) return (n / 1000).toFixed(1) + "k";
-    return n.toLocaleString();
+    return n.toLocaleString(activeLocale());
+  }
+
+  function finiteToken(value) {
+    const number = Number(value || 0);
+    return Number.isFinite(number) && number > 0 ? Math.min(number, Number.MAX_SAFE_INTEGER) : 0;
+  }
+
+  function allocateShareTenths(values, total) {
+    if (!(total > 0)) return values.map(function () { return 0; });
+    const raw = values.map(function (value) { return value / total * 1000; });
+    const allocated = raw.map(Math.floor);
+    let remainder = 1000 - allocated.reduce(function (sum, value) { return sum + value; }, 0);
+    const order = raw.map(function (value, index) {
+      return { index: index, fraction: value - allocated[index] };
+    }).sort(function (a, b) { return b.fraction - a.fraction || a.index - b.index; });
+    for (let index = 0; index < order.length && remainder > 0; index += 1, remainder -= 1) {
+      allocated[order[index].index] += 1;
+    }
+    return allocated;
+  }
+
+  function compositionOf(source) {
+    source = source || {};
+    const input = finiteToken(source.input_tokens);
+    const output = finiteToken(source.output_tokens);
+    const cacheRead = finiteToken(source.cache_read_tokens);
+    const cacheWrite = finiteToken(source.cache_write_tokens);
+    const reasoning = Math.min(output, finiteToken(source.reasoning_tokens));
+    const outputNonReasoning = output - reasoning;
+    const additiveTotal = input + output + cacheRead + cacheWrite;
+    return {
+      input: input, output: output, outputNonReasoning: outputNonReasoning,
+      reasoning: reasoning, cacheRead: cacheRead, cacheWrite: cacheWrite,
+      additiveTotal: additiveTotal,
+      shareTenths: allocateShareTenths([input, output, cacheRead, cacheWrite], additiveTotal),
+      reasoningOutputTenths: output > 0 ? Math.round(reasoning / output * 1000) : 0
+    };
   }
 
   function formatDate(value) {
@@ -158,6 +210,20 @@
       timeStyle: bucket === "hour" ? "short" : undefined,
       timeZone: "UTC"
     }).format(date);
+  }
+
+  function activeLocale() {
+    return String(document.documentElement.lang || navigator.language || "en");
+  }
+
+  function formatPercentTenths(tenths) {
+    const locale = activeLocale();
+    const value = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(tenths / 10);
+    return value + (locale.toLowerCase().startsWith("fr") ? " %" : "%");
+  }
+
+  function formatExactNumber(value) {
+    return new Intl.NumberFormat(activeLocale(), { maximumFractionDigits: 0 }).format(value);
   }
 
   function bindingWindow(account) {
@@ -311,11 +377,22 @@
     const history = props.history || {};
     const series = history.series || {};
     const points = series.points || [];
+    const preferredRovingIndex = Math.max(0, props.selectedBucket === null
+      ? points.findIndex(function (point) { return compositionOf(point).additiveTotal > 0; })
+      : points.findIndex(function (point) { return Number(point.bucket_start) === props.selectedBucket; }));
     const t = props.t;
     const viewportRef = React.useRef(null);
+    const patternRef = React.useRef("aum-reasoning-" + (++chartInstance));
+    const patternId = patternRef.current;
     const widthState = React.useState(320);
     const viewportWidth = widthState[0];
     const setViewportWidth = widthState[1];
+    const activeState = React.useState(null);
+    const activeIndex = activeState[0];
+    const setActiveIndex = activeState[1];
+    const rovingState = React.useState(preferredRovingIndex);
+    const rovingIndex = points.length ? Math.max(0, Math.min(points.length - 1, rovingState[0])) : 0;
+    const setRovingIndex = rovingState[1];
     React.useEffect(function () {
       const viewport = viewportRef.current;
       if (!viewport) return undefined;
@@ -334,7 +411,8 @@
     const chartHeight = 142;
     const step = (width - left - right) / Math.max(1, points.length);
     const barWidth = Math.max(3, Math.min(18, step * 0.66));
-    const maximum = Math.max(1, ...points.map(function (point) { return Number(point.total_tokens || 0); }));
+    const compositions = points.map(compositionOf);
+    const maximum = Math.max(1, ...compositions.map(function (composition) { return composition.additiveTotal; }));
     const periodCadence = props.days === 1 ? 4 : props.days === 7 ? 1 : props.days === 30 ? 5 : 14;
     const labelStep = Math.max(periodCadence, Math.ceil(72 / step));
     const legends = [
@@ -344,6 +422,26 @@
       ["cache-read", t.cacheReadLegend],
       ["cache-write", t.cacheWriteLegend]
     ];
+    const periodSource = points.reduce(function (total, point) {
+      total.input_tokens += finiteToken(point.input_tokens);
+      total.output_tokens += finiteToken(point.output_tokens);
+      total.reasoning_tokens += Math.min(finiteToken(point.output_tokens), finiteToken(point.reasoning_tokens));
+      total.cache_read_tokens += finiteToken(point.cache_read_tokens);
+      total.cache_write_tokens += finiteToken(point.cache_write_tokens);
+      return total;
+    }, { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 });
+    const period = compositionOf(periodSource);
+    const percent = formatPercentTenths;
+    const firstDate = points.length ? formatBucket(points[0].bucket_start, series.bucket) : "—";
+    const lastDate = points.length ? formatBucket(points[points.length - 1].bucket_start, series.bucket) : "—";
+    const focusBucket = function (event, index) {
+      const targetIndex = Math.max(0, Math.min(points.length - 1, index));
+      setRovingIndex(targetIndex);
+      const svg = event.currentTarget && event.currentTarget.ownerSVGElement;
+      const bars = svg && svg.querySelectorAll && svg.querySelectorAll("[data-bucket-index]");
+      const target = bars && bars[targetIndex];
+      if (target && target.focus) target.focus();
+    };
 
     return h("section", { className: "aum-card aum-chart-card" },
       h("div", { className: "aum-chart-head" },
@@ -351,13 +449,53 @@
           h("h2", { className: "aum-card-title" }, t.chart),
           h("p", { className: "aum-card-meta" }, t.chartHint)
         ),
-        h("div", { className: "aum-periods", "aria-label": t.chart }, [1, 7, 30, 90].map(function (days) {
+        h("div", { className: "aum-periods", role: "group", "aria-label": t.periodGroup }, [1, 7, 30, 90].map(function (days) {
           return h("button", {
             type: "button",
             className: "aum-period" + (props.days === days ? " is-active" : ""),
+            "aria-pressed": props.days === days,
             onClick: function () { props.onDays(days); },
             key: days
           }, days === 1 ? "24h" : days + "d");
+        }))
+      ),
+      h("div", { className: "aum-composition" },
+        h("div", { className: "aum-composition-head" },
+          h("strong", null, t.periodComposition),
+          h("span", null, t.periodTotal(compact(period.additiveTotal), firstDate, lastDate))
+        ),
+        h("div", {
+          className: "aum-composition-strip",
+          role: "img",
+          "aria-label": period.additiveTotal
+            ? t.periodComposition + ": " + formatExactNumber(period.additiveTotal) + " " + t.tokens + "; "
+              + t.inputLegend + " " + percent(period.shareTenths[0]) + "; "
+              + t.outputLegend + " " + percent(period.shareTenths[1]) + ", " + t.reasoningLegend + " " + formatExactNumber(period.reasoning) + "; "
+              + t.cacheReadLegend + " " + percent(period.shareTenths[2]) + "; " + t.cacheWriteLegend + " " + percent(period.shareTenths[3])
+            : t.emptyComposition
+        }, [
+          ["input", period.input], ["output", period.outputNonReasoning], ["reasoning", period.reasoning],
+          ["cache-read", period.cacheRead], ["cache-write", period.cacheWrite]
+        ].map(function (segment) {
+          return h("span", {
+            className: "aum-composition-segment aum-chart-" + segment[0],
+            style: { width: period.additiveTotal ? segment[1] / period.additiveTotal * 100 + "%" : "0%" },
+            "aria-hidden": true,
+            key: segment[0]
+          });
+        })),
+        h("div", { className: "aum-composition-metrics" }, [
+          ["input", t.inputLegend, period.input, period.shareTenths[0]],
+          ["output", t.outputLegend, period.output, period.shareTenths[1]],
+          ["cache-read", t.cacheReadLegend, period.cacheRead, period.shareTenths[2]],
+          ["cache-write", t.cacheWriteLegend, period.cacheWrite, period.shareTenths[3]]
+        ].map(function (metric) {
+          return h("div", { className: "aum-composition-metric", key: metric[0] },
+            h("i", { className: "aum-legend-swatch aum-chart-" + metric[0] }),
+            h("span", null, metric[1]),
+            h("b", null, percent(metric[3]) + " · " + compact(metric[2])),
+            metric[0] === "output" ? h("small", null, "↳ " + t.reasoningShare(percent(period.reasoningOutputTenths), compact(period.reasoning))) : null
+          );
         }))
       ),
       points.length ? h("div", { className: "aum-chart-scroll", ref: viewportRef },
@@ -368,17 +506,21 @@
           role: "group",
           "aria-label": t.chart
         },
+          h("defs", null, h("pattern", { id: patternId, patternUnits: "userSpaceOnUse", width: 5, height: 5, patternTransform: "rotate(135)" },
+            h("rect", { width: 5, height: 5, fill: "#f2eee3" }),
+            h("rect", { width: 2, height: 5, fill: "#082522" })
+          )),
           h("line", { className: "aum-chart-axis", x1: left, y1: baseline, x2: width - right, y2: baseline }),
           h("line", { className: "aum-chart-axis", x1: left, y1: baseline - chartHeight / 2, x2: width - right, y2: baseline - chartHeight / 2 }),
           h("line", { className: "aum-chart-axis", x1: left, y1: baseline - chartHeight, x2: width - right, y2: baseline - chartHeight }),
           points.map(function (point, index) {
-            const reasoning = Math.min(Number(point.reasoning_tokens || 0), Number(point.output_tokens || 0));
+            const composition = compositions[index];
             const segments = [
-              ["input", Number(point.input_tokens || 0)],
-              ["cache-read", Number(point.cache_read_tokens || 0)],
-              ["cache-write", Number(point.cache_write_tokens || 0)],
-              ["output", Math.max(0, Number(point.output_tokens || 0) - reasoning)],
-              ["reasoning", reasoning]
+              ["input", composition.input],
+              ["output", composition.outputNonReasoning],
+              ["reasoning", composition.reasoning],
+              ["cache-read", composition.cacheRead],
+              ["cache-write", composition.cacheWrite]
             ];
             const x = left + index * step + (step - barWidth) / 2;
             let y = baseline;
@@ -391,34 +533,46 @@
                 y: y,
                 width: barWidth,
                 height: segmentHeight,
+                fill: segment[0] === "reasoning" ? "url(#" + patternId + ")" : undefined,
                 key: segment[0]
               });
             });
             const label = formatBucket(point.bucket_start, series.bucket);
-            const tooltip = label + " UTC · " + Number(point.total_tokens || 0).toLocaleString() + " " + t.tokens
-              + " · " + t.inputLegend + " " + compact(point.input_tokens)
-              + " · " + t.outputLegend + " " + compact(point.output_tokens)
-              + " · " + t.cacheReadLegend + " " + compact(point.cache_read_tokens)
-              + " · " + t.cacheWriteLegend + " " + compact(point.cache_write_tokens)
-              + " · " + t.reasoningLegend + " " + compact(point.reasoning_tokens)
+            const tooltip = t.bucketBreakdown(label) + " · " + formatExactNumber(composition.additiveTotal) + " " + t.tokens
+              + " · " + t.inputLegend + " " + formatExactNumber(composition.input) + " " + percent(composition.shareTenths[0])
+              + " · " + t.outputLegend + " " + formatExactNumber(composition.output) + " " + percent(composition.shareTenths[1])
+              + " · " + t.reasoningLegend + " " + formatExactNumber(composition.reasoning) + " " + percent(composition.reasoningOutputTenths) + " " + t.ofOutput
+              + " · " + t.cacheReadLegend + " " + formatExactNumber(composition.cacheRead) + " " + percent(composition.shareTenths[2])
+              + " · " + t.cacheWriteLegend + " " + formatExactNumber(composition.cacheWrite) + " " + percent(composition.shareTenths[3])
               + " · " + compact(point.sessions) + " " + t.sessions
               + " · " + compact(point.api_calls) + " " + t.calls;
             const selected = props.selectedBucket === Number(point.bucket_start);
             return h("g", {
               className: "aum-chart-bar" + (selected ? " is-selected" : ""),
               role: "button",
-              tabIndex: 0,
+              tabIndex: index === rovingIndex ? 0 : -1,
+              "data-bucket-index": index,
               "aria-label": tooltip,
               "aria-pressed": selected,
               onClick: function () { props.onSelect(Number(point.bucket_start)); },
+              onMouseEnter: function () { setActiveIndex(index); },
+              onMouseLeave: function () { setActiveIndex(null); },
+              onFocus: function () { setRovingIndex(index); setActiveIndex(index); },
+              onBlur: function () { setActiveIndex(null); },
               onKeyDown: function (event) {
-                if (event.key === " ") event.preventDefault();
+                if ([" ", "ArrowLeft", "ArrowRight", "Home", "End", "Escape"].includes(event.key)) event.preventDefault();
                 if (event.key === "Enter" || event.key === " ") props.onSelect(Number(point.bucket_start));
+                if (event.key === "ArrowLeft") focusBucket(event, index - 1);
+                if (event.key === "ArrowRight") focusBucket(event, index + 1);
+                if (event.key === "Home") focusBucket(event, 0);
+                if (event.key === "End") focusBucket(event, points.length - 1);
+                if (event.key === "Escape") setActiveIndex(null);
               },
               key: point.bucket_start
             },
               h("title", null, tooltip),
               rectangles,
+              h("rect", { className: "aum-chart-outline", x: x - 2, y: baseline - composition.additiveTotal / maximum * chartHeight - 2, width: barWidth + 4, height: composition.additiveTotal / maximum * chartHeight + 4 }),
               index % labelStep === 0 || index === points.length - 1
                 ? h("text", { className: "aum-chart-label", x: x + barWidth / 2, y: baseline + 22, textAnchor: "middle" }, label)
                 : null
@@ -427,6 +581,10 @@
           h("text", { className: "aum-chart-label", x: width - right, y: 216, textAnchor: "end" }, "UTC")
         )
       ) : h("div", { className: "aum-empty" }, t.empty),
+      activeIndex !== null && points[activeIndex] ? h("div", {
+        className: "aum-chart-tooltip",
+        role: "tooltip"
+      }, bucketTooltip(points[activeIndex], compositions[activeIndex], series.bucket, t, percent)) : null,
       h("div", { className: "aum-chart-legend" }, legends.map(function (legend) {
         return h("span", { key: legend[0] },
           h("i", { className: "aum-legend-swatch aum-chart-" + legend[0] }),
@@ -434,6 +592,16 @@
         );
       }))
     );
+  }
+
+  function bucketTooltip(point, composition, bucket, t, percent) {
+    return t.bucketBreakdown(formatBucket(point.bucket_start, bucket)) + " · " + formatExactNumber(composition.additiveTotal) + " " + t.tokens
+      + " · " + compact(point.sessions) + " " + t.sessions + " · " + compact(point.api_calls) + " " + t.calls
+      + " · " + t.inputLegend + " " + formatExactNumber(composition.input) + " " + percent(composition.shareTenths[0])
+      + " · " + t.outputLegend + " " + formatExactNumber(composition.output) + " " + percent(composition.shareTenths[1])
+      + " · " + t.reasoningLegend + " " + formatExactNumber(composition.reasoning) + " " + percent(composition.reasoningOutputTenths) + " " + t.ofOutput
+      + " · " + t.cacheReadLegend + " " + formatExactNumber(composition.cacheRead) + " " + percent(composition.shareTenths[2])
+      + " · " + t.cacheWriteLegend + " " + formatExactNumber(composition.cacheWrite) + " " + percent(composition.shareTenths[3]);
   }
 
   function HistoryTable(props) {
@@ -485,7 +653,7 @@
               h("td", {
                 className: "aum-num aum-band-" + (band ? band.key : "none"),
                 title: tokenDetail,
-                "aria-label": band ? Number(row.total_tokens).toLocaleString() + " " + t.tokens + ", " + band.label : t.usageUnavailable,
+                "aria-label": band ? formatExactNumber(Number(row.total_tokens)) + " " + t.tokens + ", " + band.label : t.usageUnavailable,
                 "data-label": t.tokens
               }, band ? compact(row.total_tokens) + " · " + band.label : "—"),
               h("td", { "data-label": t.logRef }, row.session_ref ? h("code", { className: "aum-session-ref", title: t.logRef }, row.session_ref) : "—")
