@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 import sqlite3
 import stat
@@ -14,7 +15,6 @@ import threading
 import time
 import unicodedata
 from datetime import UTC, datetime
-from itertools import islice
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -312,7 +312,12 @@ def _discover_profile_databases() -> tuple[list[tuple[str, Path]], list[dict[str
             raise OSError("unsafe profiles root")
         if profiles_root.resolve(strict=True) != profiles_root:
             raise OSError("canonical mismatch")
-        entries = list(islice(profiles_root.iterdir(), _MAX_PROFILE_SCAN_ENTRIES + 1))
+        entries = []
+        with os.scandir(profiles_root) as profile_entries:
+            for entry in profile_entries:
+                entries.append(Path(entry.path))
+                if len(entries) > _MAX_PROFILE_SCAN_ENTRIES:
+                    break
         scan_truncated = len(entries) > _MAX_PROFILE_SCAN_ENTRIES
         entries = sorted(
             entries[:_MAX_PROFILE_SCAN_ENTRIES],

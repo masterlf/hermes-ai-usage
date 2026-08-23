@@ -791,6 +791,62 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(failures, [{"profile": None, "code": "profiles_directory_truncated"}])
         self.assertTrue(truncated)
 
+    def test_profile_directory_scan_stops_consuming_and_closes_scandir(self):
+        class ControlledScandir:
+            def __init__(self, entries):
+                self._entries = iter(entries)
+                self.consumed = 0
+                self.closed = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _traceback):
+                self.closed = True
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                entry = next(self._entries)
+                self.consumed += 1
+                return entry
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profiles = root / "profiles"
+            profiles.mkdir()
+            self._create_state_db(root)
+            names = ("charlie", "alpha", "bravo", "delta", "echo")
+            for name in names:
+                home = profiles / name
+                home.mkdir()
+                self._create_state_db(home)
+            scandir = ControlledScandir(
+                [types.SimpleNamespace(name=name, path=str(profiles / name)) for name in names]
+            )
+
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module, "_MAX_PROFILE_SCAN_ENTRIES", 3),
+                mock.patch.object(
+                    module,
+                    "os",
+                    types.SimpleNamespace(scandir=lambda _path: scandir),
+                    create=True,
+                ),
+            ):
+                candidates, failures, truncated = module._discover_profile_databases()
+
+        self.assertEqual(scandir.consumed, 4)
+        self.assertTrue(scandir.closed)
+        self.assertEqual(
+            [profile for profile, _path in candidates],
+            ["default", "alpha", "bravo", "charlie"],
+        )
+        self.assertEqual(failures, [{"profile": None, "code": "profiles_directory_truncated"}])
+        self.assertTrue(truncated)
+
     def test_profile_directory_raw_scan_is_bounded_for_invalid_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
