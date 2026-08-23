@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 import sqlite3
+import stat
 import threading
 import time
 import unicodedata
@@ -20,7 +22,7 @@ from urllib.parse import quote
 from agent.account_usage import AccountUsageSnapshot, fetch_account_usage
 from fastapi import APIRouter, HTTPException, Query
 from hermes_cli.config import load_config
-from hermes_constants import get_hermes_home
+from hermes_constants import get_default_hermes_root, get_hermes_home
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ _account_cache: dict[tuple[str, str], tuple[float, AccountUsageSnapshot | None]]
 _account_cache_lock = threading.Lock()
 _SAFE_PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _SAFE_PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_PROFILE_HOME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _SAFE_SESSION_REF_RE = re.compile(r"^[A-Za-z0-9._-]{12,20}$")
 _SESSION_REF_WIDTHS = (12, 16, 20)
 _TOTAL_TOKEN_FIELDS = (
@@ -41,6 +44,10 @@ _TOTAL_TOKEN_FIELDS = (
 )
 _TOKEN_FIELDS = (*_TOTAL_TOKEN_FIELDS, "reasoning_tokens")
 _MAX_SESSION_DURATION_SECONDS = 365 * 86400
+_MAX_PROFILES = 64
+_MAX_PROFILE_SCAN_ENTRIES = 256
+_MAX_SESSION_IDENTITIES = 10_000
+_SQL_PROGRESS_STEPS = 2_000_000
 _REQUIRED_SESSION_COLUMNS = frozenset(
     {
         "id", "source", "model", "billing_provider", "started_at", "ended_at",
@@ -246,7 +253,132 @@ def _readonly_connection(db_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(f"file:{encoded}?mode=ro", uri=True, timeout=5.0)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA query_only=ON")
+    if connection.execute("PRAGMA query_only").fetchone()[0] != 1:
+        connection.close()
+        raise sqlite3.OperationalError("query-only mode unavailable")
+    remaining = _SQL_PROGRESS_STEPS
+
+    def progress() -> int:
+        nonlocal remaining
+        remaining -= 1000
+        return 1 if remaining <= 0 else 0
+
+    connection.set_progress_handler(progress, 1000)
     return connection
+
+
+def _discover_profile_databases() -> tuple[list[tuple[str, Path]], list[dict[str, Any]], bool]:
+    """Return root-owned profile databases without following profile symlinks."""
+    failures: list[dict[str, Any]] = []
+    candidates: list[tuple[str, Path]] = []
+    database_identities: set[tuple[int, int]] = set()
+    try:
+        root = Path(get_default_hermes_root()).resolve(strict=True)
+        if not root.is_dir():
+            raise OSError("root is not a directory")
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return [], [{"profile": None, "code": "profile_root_unavailable"}], False
+
+    def add_candidate(profile: str, home: Path) -> None:
+        db_path = home / "state.db"
+        try:
+            home_stat = home.lstat()
+            db_stat = db_path.lstat()
+            if stat.S_ISLNK(home_stat.st_mode) or not stat.S_ISDIR(home_stat.st_mode):
+                raise OSError("unsafe home")
+            if stat.S_ISLNK(db_stat.st_mode) or not stat.S_ISREG(db_stat.st_mode):
+                raise OSError("unsafe database")
+            if home.resolve(strict=True) != home or db_path.resolve(strict=True) != db_path:
+                raise OSError("canonical mismatch")
+            db_path.relative_to(root)
+        except FileNotFoundError:
+            failures.append({"profile": profile, "code": "state_db_missing"})
+        except (OSError, RuntimeError, ValueError):
+            failures.append({"profile": profile, "code": "unsafe_profile_path"})
+        else:
+            database_identity = (db_stat.st_dev, db_stat.st_ino)
+            if database_identity in database_identities:
+                failures.append({"profile": profile, "code": "duplicate_database_identity"})
+                return
+            database_identities.add(database_identity)
+            candidates.append((profile, db_path))
+
+    add_candidate("default", root)
+    profiles_root = root / "profiles"
+    scan_truncated = False
+    try:
+        profiles_stat = profiles_root.lstat()
+        if stat.S_ISLNK(profiles_stat.st_mode) or not stat.S_ISDIR(profiles_stat.st_mode):
+            raise OSError("unsafe profiles root")
+        if profiles_root.resolve(strict=True) != profiles_root:
+            raise OSError("canonical mismatch")
+        entries = []
+        with os.scandir(profiles_root) as profile_entries:
+            for entry in profile_entries:
+                entries.append(Path(entry.path))
+                if len(entries) > _MAX_PROFILE_SCAN_ENTRIES:
+                    break
+        scan_truncated = len(entries) > _MAX_PROFILE_SCAN_ENTRIES
+        entries = sorted(
+            entries[:_MAX_PROFILE_SCAN_ENTRIES],
+            key=lambda entry: entry.name,
+        )
+    except FileNotFoundError:
+        entries = []
+    except (OSError, RuntimeError, ValueError):
+        failures.append({"profile": None, "code": "profiles_directory_unavailable"})
+        entries = []
+        scan_truncated = False
+
+    if scan_truncated:
+        failures.append({"profile": None, "code": "profiles_directory_truncated"})
+
+    eligible = [
+        entry
+        for entry in entries
+        if _PROFILE_HOME_RE.fullmatch(entry.name) and entry.name != "default"
+    ]
+    slots = max(0, _MAX_PROFILES - 1)
+    truncated = scan_truncated or len(eligible) > slots
+    for home in eligible[:slots]:
+        add_candidate(home.name, home)
+    return candidates, failures, truncated
+
+
+def _session_identities(db_path: Path, days: int) -> tuple[set[str] | None, str | None]:
+    """Read bounded full IDs transiently so copied histories fail closed."""
+    now = time.time()
+    cutoff = now - (days * 86400)
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = _readonly_connection(db_path)
+        columns = {str(row["name"]) for row in connection.execute("PRAGMA table_info(sessions)")}
+        if not _REQUIRED_SESSION_COLUMNS.issubset(columns):
+            raise sqlite3.OperationalError("unsupported sessions schema")
+        rows = connection.execute(
+            """SELECT id
+               FROM sessions
+               WHERE COALESCE(ended_at, started_at) >= ?
+                 AND COALESCE(ended_at, started_at) <= ?
+                 AND (
+                     MAX(COALESCE(input_tokens, 0), 0)
+                     + MAX(COALESCE(output_tokens, 0), 0)
+                     + MAX(COALESCE(cache_read_tokens, 0), 0)
+                     + MAX(COALESCE(cache_write_tokens, 0), 0)
+                 ) > 0
+               ORDER BY id
+               LIMIT ?""",
+            (cutoff, now, _MAX_SESSION_IDENTITIES + 1),
+        ).fetchall()
+        if len(rows) > _MAX_SESSION_IDENTITIES:
+            return None, "session_identity_scan_truncated"
+        return {str(row["id"] or "") for row in rows}, None
+    except (sqlite3.Error, OSError) as exc:
+        logger.warning("Session identity scan failed (%s)", type(exc).__name__)
+        return None, "database_unavailable"
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def _session_references(
@@ -421,8 +553,15 @@ def _history_rows_query(columns: set[str]) -> str:
     )
 
 
-def _token_history(days: int, limit: int, bucket_start: int | None = None) -> dict[str, Any]:
-    db_path = Path(get_hermes_home()) / "state.db"
+def _token_history(
+    days: int,
+    limit: int,
+    bucket_start: int | None = None,
+    *,
+    db_path: Path | None = None,
+    profile_identity: str | None = None,
+) -> dict[str, Any]:
+    db_path = db_path or Path(get_hermes_home()) / "state.db"
     now = time.time()
     cutoff = now - (days * 86400)
     bucket_seconds = _history_series_shape(days)["bucket_seconds"]
@@ -609,7 +748,8 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
         session_id = str(row.pop("id", "") or "")
         provider = _safe_provider(row.pop("billing_provider", None)) or "unknown"
         surface = _safe_surface(row.pop("source_raw", None))
-        profile = _safe_profile(row.pop("profile_raw", None))
+        stored_profile = _safe_profile(row.pop("profile_raw", None))
+        profile = profile_identity or stored_profile
         workload_type = _workload_type(
             surface,
             row.pop("is_delegate", 0),
@@ -647,6 +787,109 @@ def _token_history(days: int, limit: int, bucket_start: int | None = None) -> di
     }
 
 
+def _all_profiles_history(days: int, limit: int, bucket_start: int | None = None) -> dict[str, Any]:
+    candidates, failures, profiles_truncated = _discover_profile_databases()
+    profiles_considered = len(candidates) + len(failures)
+    identity_sets: dict[str, set[str]] = {}
+    verified_candidates: list[tuple[str, Path]] = []
+    for profile, db_path in candidates:
+        identities, failure_code = _session_identities(db_path, days)
+        if failure_code:
+            failures.append({"profile": profile, "code": failure_code})
+        else:
+            identity_sets[profile] = identities or set()
+            verified_candidates.append((profile, db_path))
+
+    identity_owners: dict[str, list[str]] = {}
+    for profile, identities in identity_sets.items():
+        for session_id in identities:
+            identity_owners.setdefault(session_id, []).append(profile)
+    ambiguous_profiles = {
+        profile
+        for owners in identity_owners.values()
+        if len(owners) > 1
+        for profile in owners
+    }
+    if ambiguous_profiles:
+        failures.extend(
+            {"profile": profile, "code": "duplicate_session_identity"}
+            for profile in sorted(ambiguous_profiles)
+        )
+        verified_candidates = [
+            candidate
+            for candidate in verified_candidates
+            if candidate[0] not in ambiguous_profiles
+        ]
+
+    healthy: list[tuple[str, dict[str, Any]]] = []
+    for profile, db_path in verified_candidates:
+        payload = _token_history(
+            days,
+            min(limit + 1, 201),
+            bucket_start,
+            db_path=db_path,
+            profile_identity=profile,
+        )
+        if payload.get("available"):
+            healthy.append((profile, payload))
+        else:
+            failures.append({"profile": profile, "code": "database_unavailable"})
+
+    totals = {key: 0 for key in ("sessions", "api_calls", *_TOKEN_FIELDS, "total_tokens")}
+    points: dict[int, dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
+    row_count = 0
+    profiles = []
+    series_shape = _history_series_shape(days)
+    for profile, payload in healthy:
+        profile_totals = payload.get("totals", {})
+        summary = {key: _nonnegative_int(profile_totals.get(key)) for key in totals}
+        profiles.append({"profile": profile, **summary})
+        for key in totals:
+            totals[key] += summary[key]
+        row_count += _nonnegative_int(payload.get("row_count"))
+        rows.extend(payload.get("rows", []))
+        series_shape = payload.get("series", series_shape)
+        for point in series_shape.get("points", []):
+            start = _nonnegative_int(point.get("bucket_start"))
+            merged = points.setdefault(
+                start,
+                {"bucket_start": start, **{key: 0 for key in totals}},
+            )
+            for key in totals:
+                merged[key] += _nonnegative_int(point.get(key))
+
+    profiles.sort(key=lambda item: (-item["total_tokens"], item["profile"]))
+    rows.sort(
+        key=lambda row: (
+            -float(row.get("ended_at") or row.get("started_at") or 0),
+            str(row.get("profile") or ""),
+            str(row.get("session_ref") or ""),
+        )
+    )
+    rows = rows[:limit]
+    partial = bool(failures or profiles_truncated)
+    return {
+        "available": bool(healthy),
+        "days": days,
+        "profile_scope": "all",
+        "rows": rows,
+        "row_count": row_count,
+        "rows_truncated": row_count > len(rows),
+        "selected_bucket_start": bucket_start,
+        "totals": totals if healthy else {},
+        "series": _history_series_shape(days, [points[key] for key in sorted(points)]),
+        "profiles": profiles,
+        "partial": partial,
+        "totals_complete": bool(healthy) and not partial,
+        "profile_failures": failures,
+        "profiles_considered": profiles_considered,
+        "profiles_succeeded": len(healthy),
+        "profiles_truncated": profiles_truncated,
+        "provider_quota_scope": "account_shared_not_attributed",
+    }
+
+
 @router.get("/health")
 def health() -> dict[str, Any]:
     return {"ok": True, "plugin": "ai-usage-monitor", "time": _utc_now_iso()}
@@ -678,9 +921,14 @@ def history(
     days: int = Query(default=7, ge=1, le=90),
     limit: int = Query(default=30, ge=1, le=200),
     bucket_start: int | None = Query(default=None, ge=0),
+    scope: str = Query(default="current", pattern="^(current|all)$"),
 ) -> dict[str, Any]:
     try:
-        payload = _token_history(days, limit, bucket_start)
+        payload = (
+            _all_profiles_history(days, limit, bucket_start)
+            if scope == "all"
+            else _token_history(days, limit, bucket_start)
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="invalid history bucket") from exc
     return {"ok": True, "history": payload}

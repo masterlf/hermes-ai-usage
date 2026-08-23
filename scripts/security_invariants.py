@@ -71,12 +71,22 @@ def python_invariants() -> None:
     for required in (
         'surface = _safe_surface(row.pop("source_raw", None))',
         '"source": surface',
-        'profile = _safe_profile(row.pop("profile_raw", None))',
+        'stored_profile = _safe_profile(row.pop("profile_raw", None))',
         '"duration_seconds": duration_seconds',
         '"is_active": is_active',
     ):
         if required not in source:
             fail("session attribution must remain categorical, bounded, and privacy-safe")
+    for required in (
+        "get_default_hermes_root",
+        "_PROFILE_HOME_RE.fullmatch(entry.name)",
+        "stat.S_ISLNK",
+        'profile_identity=profile',
+        '"provider_quota_scope": "account_shared_not_attributed"',
+        'pattern="^(current|all)$"',
+    ):
+        if required not in source:
+            fail("all-profile access must remain explicit, canonical, and DB-home attributed")
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):

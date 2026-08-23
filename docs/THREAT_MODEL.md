@@ -23,7 +23,8 @@
 1. Do not handle or expose provider credentials.
 2. Do not read or expose prompt/message/tool content.
 3. Do not mutate Hermes state or provider account state.
-4. Do not cross Hermes profile boundaries through caches or database access.
+4. Cross profile boundaries only after explicit All-profiles selection and only through
+   canonical, bounded, read-only database discovery.
 5. Do not present local estimates as official remote quota.
 6. Do not introduce browser code-execution or data-exfiltration sinks.
 7. Keep build and automation permissions minimal and reproducible.
@@ -36,11 +37,11 @@
 | Credential exposure | Hermes account adapters; no credential parameters or response fields; error redaction |
 | Prompt/transcript disclosure | Static SQL allowlist; no message-table access; security invariant and regression tests |
 | State mutation | SQLite `mode=ro`; `query_only`; GET-only router; mutation test |
-| Cross-profile leakage | cache key includes resolved Hermes home/profile; profile-isolation test |
+| Cross-profile leakage | current scope remains default; canonical root; strict slugs; no symlink following; physical-DB deduplication; fail-closed duplicate-session detection; DB-home attribution; profile-isolation tests |
 | SQL injection | static SQL with bound numeric parameters; FastAPI validation |
 | XSS / DOM injection | React text rendering; bounded strings; prohibited raw-HTML/eval sinks |
 | Browser credential leakage | host SDK clients only; no custom Authorization/cookies/storage/direct fetch |
-| Query DoS | bounded `days` and `limit`; short SQLite timeout; provider cache |
+| Query DoS | bounded `days`, raw directory scan, profile/session-identity counts and combined rows; SQLite VM-step budget and timeout; provider cache |
 | Session correlation leakage | complete IDs removed before serialization; bounded collision-aware suffix; authenticated host surfaces only |
 | Confidential source/title semantics | exact surface enum; raw source/title never serialized; complete-payload regressions |
 | Lineage leakage/misclassification | category-only marker checks; branch/compression distinction; fail closed to `unknown` |
@@ -68,6 +69,8 @@
 - An authenticated user can issue repeated bounded history requests; host-level rate
   limiting and resource controls remain upstream concerns.
 - A compromised Hermes core process has privileges beyond this plugin's controls.
+- Filesystem checks and SQLite open are not one atomic operation; a trusted local
+  administrator racing profile paths remains outside the plugin isolation boundary.
 - GitHub security automation reduces risk but does not replace human review.
 
 ## Explicitly unsupported

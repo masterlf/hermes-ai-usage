@@ -28,6 +28,8 @@ It never reads prompt or message content.
 - session history with provider, model, safe surface/workload enums, strict profile slug,
   validated duration/active state, calls, five visible token-consumption bands, and a short
   reference that can be searched in retained Hermes logs;
+- current-profile history by default, with an explicit All-profiles view for authorised
+  operators and per-profile totals that disclose incomplete or truncated reads;
 - French and English UI;
 - no independent credential handling, browser storage, analytics, or third-party scripts.
 
@@ -118,7 +120,7 @@ Hermes mounts the router under `/api/plugins/ai-usage-monitor`:
 
 - `GET /health`
 - `GET /snapshot?provider=auto`
-- `GET /history?days=7&limit=200&bucket_start=<UTC epoch>` (`days` is bounded to
+- `GET /history?days=7&limit=200&bucket_start=<UTC epoch>&scope=current` (`days` is bounded to
   1–90; `bucket_start` is optional and must be a UTC bucket boundary within the
   requested range, with the immediately preceding bucket also accepted as clock grace)
 
@@ -130,6 +132,16 @@ Bucket-specific results remain capped at 200 rows and expose `row_count` plus
 `rows_truncated` so the UI never implies that a partial list is complete.
 History rows expose `surface`, `workload_type`, `profile`, `duration_seconds`, and
 `is_active`. The legacy `source` field is only an alias of the safe `surface` enum.
+`scope=current` is the default and reads only the active profile. `scope=all` is opt-in and
+crosses the local profile boundary: it must be available only to users authorised to view
+every profile. The plugin does not implement a separate per-profile ACL: any caller allowed
+to reach this route can request `scope=all`, so the host/deployment owns that authorization
+boundary. All-profile responses include `partial`, `totals_complete`,
+`profile_failures`, `profiles_considered`, `profiles_succeeded`, and `profiles_truncated`.
+Failures contain only profile slugs and fixed codes. Duplicate physical databases are read
+once. If distinct databases contain an equal full session ID, every affected database is
+excluded and the response is marked partial because exact ownership cannot be proven.
+Provider quota remains account-level/shared and is never apportioned to profiles.
 Token bands are fixed by total tokens: Low below 10k, Moderate below 50k, Elevated below
 100k, High below 250k, and Extreme at 250k or above; visible labels accompany color.
 

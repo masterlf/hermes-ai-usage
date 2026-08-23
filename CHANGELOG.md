@@ -5,6 +5,26 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-23
+
+### Added
+
+- Explicit current-profile/All-profiles controls in Desktop and Web Dashboard for
+  24-hour, 7-day, 30-day, and 90-day locally recorded token attribution.
+- Ranked per-profile token, API-call, and session totals plus profile labels on every
+  drill-down row and truthful partial-data warnings.
+
+### Security
+
+- All-profile discovery is bounded to the canonical Hermes root and strict lowercase
+  profile slugs, rejects symlinks and path escapes, and opens each database independently
+  with SQLite read-only and query-only enforcement.
+- Profile attribution comes only from the validated database home; stored profile labels,
+  sensitive session content, full identifiers, paths, and raw failures are excluded.
+- Provider quota remains a single account-level/shared snapshot and is never apportioned
+  to profiles.
+- The hashed development lock updates pip to 26.2 to clear PYSEC-2026-3721.
+
 ## [0.4.0] - 2026-08-02
 
 ### Added
@@ -61,7 +81,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only provider-quota snapshots and seven-day token history.
 - French and English UI text.
 
-[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.5.0
 [0.4.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.4.0
 [0.3.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.3.0
 [0.2.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.2.1

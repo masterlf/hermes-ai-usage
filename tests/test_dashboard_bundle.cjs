@@ -23,6 +23,8 @@ const history = {
   history: {
     days: 7,
     totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, total_tokens: 170 },
+    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, total_tokens: 170 }],
+    partial: true,
     series: {
       bucket: 'day',
       bucket_seconds: 86400,
@@ -152,6 +154,9 @@ function contrastRatio(foreground, background) {
   vm.runInNewContext(fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8'), sandbox);
   const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
   const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
+  if (/\.aum-table thead\s*\{[^}]*display:\s*none/.test(dashboardStyles)) {
+    throw new Error('mobile tables must not remove column headers from the accessibility tree');
+  }
   if (!dashboardSource.includes('ResizeObserver')) throw new Error('dashboard chart is not container-aware');
   if (!dashboardSource.includes('role: "progressbar"')) throw new Error('dashboard quota progress semantics missing');
   if (dashboardStyles.includes('prefers-color-scheme')) throw new Error('token bands must follow the dashboard theme, not the OS theme');
@@ -195,7 +200,15 @@ function contrastRatio(foreground, background) {
   if (!thirtyDayLoaded.includes('thirty-day-model')) throw new Error('thirty-day history response was not rendered: ' + thirtyDayLoaded);
   if (!rendered.includes('abcd12345678')) throw new Error('log reference was not rendered: ' + rendered);
   if (!rendered.includes('Élevée')) throw new Error('visible token band was not rendered: ' + rendered);
-  if (!rendered.includes('CLI · Sous-agent · security')) throw new Error('safe workload context was not rendered: ' + rendered);
+  if (!rendered.includes('CLI · Sous-agent') || !rendered.includes('security')) throw new Error('profile-labelled workload was not rendered: ' + rendered);
+  if (!rendered.includes('Consommation par profil') || !rendered.includes('Données partielles')) throw new Error('profile breakdown/partial warning missing: ' + rendered);
+  const profileTable = findFirst(render(), node => node.type === 'table' && node.props && node.props['aria-label'] === 'Consommation par profil');
+  if (!profileTable) throw new Error('profile breakdown table missing');
+  const profileLabels = findAll(profileTable, node => node.type === 'td').map(node => node.props && node.props['data-label']);
+  for (const label of ['Profil', 'Tokens bruts', 'Appels API', 'Sessions']) {
+    if (!profileLabels.includes(label)) throw new Error('profile mobile field label missing: ' + label);
+  }
+  if (!rendered.includes('partagé au niveau du compte')) throw new Error('shared account quota wording missing: ' + rendered);
   if (!rendered.includes('2 min 05 s')) throw new Error('session duration was not rendered: ' + rendered);
   sandbox.document.documentElement.lang = 'en';
   const englishRendered = flatten(render());
@@ -234,7 +247,14 @@ function contrastRatio(foreground, background) {
   if (!calls.some(path => path.includes('&bucket_start=1784851200'))) {
     throw new Error('chart selection did not request bucket-specific history: ' + calls.join(', '));
   }
-  if (calls.length !== 8 || !calls.every(path => path.startsWith('/api/plugins/ai-usage-monitor/'))) {
+  const scopeSelector = findFirst(render(), node => node.type === 'select' && node.props && node.props['aria-label']);
+  if (!scopeSelector) throw new Error('profile scope selector missing');
+  scopeSelector.props.onChange({ target: { value: 'all' } });
+  render();
+  effect();
+  await new Promise(resolve => setImmediate(resolve));
+  if (!calls.some(path => path.includes('/history?') && path.includes('scope=all'))) throw new Error('all-profile request missing: ' + calls.join(', '));
+  if (!calls.every(path => path.startsWith('/api/plugins/ai-usage-monitor/'))) {
     throw new Error('unexpected dashboard API destination');
   }
   console.log('dashboard bundle smoke: ok');
