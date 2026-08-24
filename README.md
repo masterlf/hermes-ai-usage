@@ -30,8 +30,10 @@ It never reads prompt or message content.
 - session history with provider, model, safe surface/workload enums, strict profile slug,
   validated duration/active state, calls, five visible token-consumption bands, and a short
   reference that can be searched in retained Hermes logs;
-- current-profile history by default, with an explicit All-profiles view for authorised
-  operators and per-profile totals that disclose incomplete or truncated reads;
+- all-profile history initially selected in Desktop and Web Dashboard, with an explicit
+  Current-profile selector and per-profile totals that disclose incomplete or truncated reads;
+- separate non-cache-read, cache-read, and secondary raw totals across summaries, profile
+  attribution, period composition, and recent sessions;
 - French and English UI;
 - no independent credential handling, browser storage, analytics, or third-party scripts.
 
@@ -42,6 +44,12 @@ ChatGPT subscription**. It is not a universal meter for ordinary ChatGPT
 conversations. Provider quota and token counters are deliberately displayed
 separately: model choice, cache, reasoning, tools, images, service tier, and
 rolling windows make a direct conversion misleading.
+
+The UI uses one neutral client-side metric:
+`non_cache_read_tokens = input_tokens + output_tokens + cache_write_tokens`, after each
+component is normalized to a finite non-negative bound. Cache-read tokens are shown
+separately. Raw total is the secondary sum of non-cache-read and cache-read tokens. These
+local counters do not represent spend, billing, provider quota, or provider allocation.
 
 ## Security posture
 
@@ -134,18 +142,21 @@ Bucket-specific results remain capped at 200 rows and expose `row_count` plus
 `rows_truncated` so the UI never implies that a partial list is complete.
 History rows expose `surface`, `workload_type`, `profile`, `duration_seconds`, and
 `is_active`. The legacy `source` field is only an alias of the safe `surface` enum.
-`scope=current` is the default and reads only the active profile. `scope=all` is opt-in and
-crosses the local profile boundary: it must be available only to users authorised to view
-every profile. The plugin does not implement a separate per-profile ACL: any caller allowed
-to reach this route can request `scope=all`, so the host/deployment owns that authorization
-boundary. All-profile responses include `partial`, `totals_complete`,
+The backend API retains `scope=current` as its request default and reads only the active
+profile when scope is omitted. Desktop and Web Dashboard initially request `scope=all`, and
+their selector preserves the chosen scope across period changes, bucket selection, and
+refresh. `scope=all` crosses the local profile boundary: the UI must be available only to
+users authorised to view every profile. The plugin does not implement a separate per-profile
+ACL: any caller allowed to reach this route can request `scope=all`, so the host/deployment
+owns that authorization boundary. All-profile responses include `partial`, `totals_complete`,
 `profile_failures`, `profiles_considered`, `profiles_succeeded`, and `profiles_truncated`.
 Failures contain only profile slugs and fixed codes. Duplicate physical databases are read
 once. If distinct databases contain an equal full session ID, every affected database is
 excluded and the response is marked partial because exact ownership cannot be proven.
 Provider quota remains account-level/shared and is never apportioned to profiles.
-Token bands are fixed by total tokens: Low below 10k, Moderate below 50k, Elevated below
-100k, High below 250k, and Extreme at 250k or above; visible labels accompany color.
+Raw-volume bands are fixed by raw total: Low below 10k, Moderate below 50k, Elevated below
+100k, High below 250k, and Extreme at 250k or above. They appear only beside the explicitly
+labelled secondary raw total, and visible text accompanies color.
 
 ## Roadmap
 

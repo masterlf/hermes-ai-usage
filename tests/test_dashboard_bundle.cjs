@@ -23,8 +23,8 @@ const history = {
   history: {
     days: 7,
     profile_scope: 'current',
-    totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, total_tokens: 170 },
-    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, total_tokens: 170 }],
+    totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 },
+    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 }],
     partial: true,
     series: {
       bucket: 'day',
@@ -35,7 +35,7 @@ const history = {
         { bucket_start: 1785024000, sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 }
       ]
     },
-    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }]
+    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 119880, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }]
   }
 };
 const React = {
@@ -87,9 +87,9 @@ const sandbox = {
             ...history.history,
             profile_scope: 'all',
             profiles: [
-              { profile: 'security', sessions: 2, api_calls: 3, total_tokens: 170 },
-              { profile: 'alpha', sessions: 1, api_calls: 1, total_tokens: 50 },
-              { profile: 'idle', sessions: 0, api_calls: 0, total_tokens: 0 }
+              { profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 },
+              { profile: 'alpha', sessions: 1, api_calls: 1, input_tokens: 20, output_tokens: 10, cache_read_tokens: 20, cache_write_tokens: 0, total_tokens: 50 },
+              { profile: 'idle', sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: 0 }
             ]
           } });
         }
@@ -168,6 +168,11 @@ function contrastRatio(foreground, background) {
 
 (async () => {
   const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
+  const manifest = JSON.parse(fs.readFileSync('runtime/dashboard/manifest.json', 'utf8'));
+  const readme = fs.readFileSync('README.md', 'utf8');
+  if (manifest.version !== '0.7.0') throw new Error('dashboard manifest version is not 0.7.0');
+  if (!readme.includes('non_cache_read_tokens = input_tokens + output_tokens + cache_write_tokens')) throw new Error('README does not document the neutral metric formula');
+  if (!readme.includes('Desktop and Web Dashboard initially request `scope=all`')) throw new Error('README does not document the client scope default');
   const instrumentedSource = dashboardSource.replace(
     'registry.register("ai-usage-monitor", AIUsagePage);',
     'window.__compositionOf = compositionOf; window.__UsageChart = UsageChart; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
@@ -180,16 +185,16 @@ function contrastRatio(foreground, background) {
   if (typeof compositionOf !== 'function') throw new Error('dashboard composition helper missing');
   if (typeof UsageChart !== 'function') throw new Error('dashboard UsageChart test export missing');
   const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
-  if (normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('dashboard composition math is incorrect');
+  if (normal.nonCacheRead !== 40 || normal.rawTotal !== 100 || normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('dashboard composition math is incorrect');
   if (normal.shareTenths.join(',') !== '100,200,600,100') throw new Error('dashboard top-level ratios are incorrect: ' + normal.shareTenths);
   const thirds = compositionOf({ input_tokens: 1, output_tokens: 1, cache_read_tokens: 1 });
   if (thirds.shareTenths.reduce((sum, value) => sum + value, 0) !== 1000) throw new Error('dashboard displayed ratios do not total 100.0%');
   const hostile = compositionOf({ input_tokens: -1, output_tokens: 2, reasoning_tokens: 99, cache_read_tokens: Infinity, cache_write_tokens: NaN });
-  if (hostile.additiveTotal !== 2 || hostile.reasoning !== 2 || hostile.outputNonReasoning !== 0) throw new Error('dashboard hostile values were not normalized');
+  if (hostile.nonCacheRead !== 2 || hostile.rawTotal !== 2 || hostile.additiveTotal !== 2 || hostile.reasoning !== 2 || hostile.outputNonReasoning !== 0) throw new Error('dashboard hostile values were not normalized');
   const zero = compositionOf({});
   if (zero.additiveTotal !== 0 || zero.shareTenths.some(value => value !== 0) || zero.reasoningOutputTenths !== 0) throw new Error('dashboard zero composition is not finite');
   const tiny = compositionOf({ input_tokens: 100, output_tokens: 100, cache_read_tokens: 99000, cache_write_tokens: 1 });
-  if (tiny.additiveTotal !== 99201 || tiny.cacheWrite !== 1) throw new Error('dashboard tiny/huge-cache composition lost exact values');
+  if (tiny.nonCacheRead !== 201 || tiny.rawTotal !== 99201 || tiny.additiveTotal !== 99201 || tiny.cacheWrite !== 1) throw new Error('dashboard tiny/huge-cache composition lost exact values');
   const overflow = compositionOf({
     input_tokens: Number.MAX_VALUE,
     output_tokens: Number.MAX_VALUE,
@@ -197,7 +202,7 @@ function contrastRatio(foreground, background) {
     cache_write_tokens: Number.MAX_VALUE,
     reasoning_tokens: Number.MAX_VALUE
   });
-  if (!Number.isFinite(overflow.additiveTotal) || overflow.shareTenths.some(value => !Number.isFinite(value))) {
+  if (!Number.isSafeInteger(overflow.nonCacheRead) || !Number.isSafeInteger(overflow.rawTotal) || !Number.isFinite(overflow.additiveTotal) || overflow.shareTenths.some(value => !Number.isFinite(value))) {
     throw new Error('dashboard aggregate overflow was not bounded');
   }
   if (overflow.shareTenths.reduce((sum, value) => sum + value, 0) !== 1000) {
@@ -237,12 +242,25 @@ function contrastRatio(foreground, background) {
   if (!effect) throw new Error('dashboard effect was not registered');
   effect();
   await new Promise(resolve => setImmediate(resolve));
+  const initialHistoryCall = calls.find(path => path.includes('/history?'));
+  if (!initialHistoryCall || !initialHistoryCall.includes('scope=all')) throw new Error('dashboard initial request is not all-profile: ' + calls.join(', '));
   const rendered = flatten(render());
   if (!rendered.includes('35% restants')) throw new Error('provider quota fallback was not rendered');
   if (!rendered.includes('65% utilisés')) throw new Error('provider used fallback was not rendered');
   if (!rendered.includes('gpt-test')) throw new Error('history row was not rendered: ' + rendered);
   if (!rendered.includes('Utilisation des tokens')) throw new Error('usage chart was not rendered: ' + rendered);
-  if (!rendered.includes('Utilisation des tokens · Profil : security')) throw new Error('French dashboard current profile ownership missing from chart heading: ' + rendered);
+  if (!rendered.includes('Utilisation des tokens · Tous les profils · 2 profils consommateurs')) throw new Error('French dashboard initial all-profile ownership missing from chart heading: ' + rendered);
+  if (!rendered.includes('Tokens hors lecture cache') || !rendered.includes('Tokens lus du cache') || !rendered.includes('Total brut')) throw new Error('French dashboard split token summary missing: ' + rendered);
+  const initialScopeSelector = findFirst(render(), node => node.type === 'select' && node.props && node.props['aria-label']);
+  if (!initialScopeSelector || initialScopeSelector.props.value !== 'all') throw new Error('dashboard all-profile selector state missing');
+  initialScopeSelector.props.onChange({ target: { value: 'current' } });
+  render();
+  effect();
+  await new Promise(resolve => setImmediate(resolve));
+  const latestHistoryCall = calls.filter(path => path.includes('/history?')).at(-1);
+  if (latestHistoryCall.includes('scope=all')) throw new Error('dashboard current-profile request retained all scope: ' + latestHistoryCall);
+  const currentRendered = flatten(render());
+  if (!currentRendered.includes('Utilisation des tokens · Profil : security')) throw new Error('French dashboard did not switch back to current profile: ' + currentRendered);
   stateCursor = 0;
   const zeroCurrentChart = flatten(UsageChart({
     history: {
@@ -275,21 +293,28 @@ function contrastRatio(foreground, background) {
   if (!rendered.includes('Élevée')) throw new Error('visible token band was not rendered: ' + rendered);
   const tokenBandCell = findFirst(render(), node => node.type === 'td' && String(node.props?.className || '').includes('aum-band-'));
   if (!tokenBandCell?.props['aria-label']?.includes(new Intl.NumberFormat('fr').format(120000))) throw new Error('dashboard history exact value did not use active French locale');
+  const visibleFrenchSplit = findAll(tokenBandCell, node => node.type === 'span' && node.props && node.props['data-token-kind']).map(flatten);
+  if (visibleFrenchSplit.join('|') !== 'Hors lecture cache 120|Lecture cache 119.9k') throw new Error('dashboard visible French row labels are not bound to their values: ' + visibleFrenchSplit.join('|'));
   if (!rendered.includes('CLI · Sous-agent') || !rendered.includes('security')) throw new Error('profile-labelled workload was not rendered: ' + rendered);
   if (!rendered.includes('Consommation par profil') || !rendered.includes('Données partielles')) throw new Error('profile breakdown/partial warning missing: ' + rendered);
   const profileTable = findFirst(render(), node => node.type === 'table' && node.props && node.props['aria-label'] === 'Consommation par profil');
   if (!profileTable) throw new Error('profile breakdown table missing');
   const profileLabels = findAll(profileTable, node => node.type === 'td').map(node => node.props && node.props['data-label']);
-  for (const label of ['Profil', 'Tokens bruts', 'Appels API', 'Sessions']) {
+  for (const label of ['Profil', 'Hors lecture cache', 'Lecture cache', 'Total brut', 'Appels API', 'Sessions']) {
     if (!profileLabels.includes(label)) throw new Error('profile mobile field label missing: ' + label);
   }
   if (!rendered.includes('partagé au niveau du compte')) throw new Error('shared account quota wording missing: ' + rendered);
   if (!rendered.includes('2 min 05 s')) throw new Error('session duration was not rendered: ' + rendered);
   sandbox.document.documentElement.lang = 'en';
-  const englishRendered = flatten(render());
+  const englishTree = render();
+  const englishRendered = flatten(englishTree);
   if (!englishRendered.includes('Token usage · Profile: security')) throw new Error('English dashboard current profile ownership missing from chart heading: ' + englishRendered);
+  if (!englishRendered.includes('Non-cache-read tokens') || !englishRendered.includes('Cache-read tokens') || !englishRendered.includes('Raw total')) throw new Error('English dashboard split token copy missing: ' + englishRendered);
   if (!englishRendered.includes('2m 05s')) throw new Error('English session duration was not localized: ' + englishRendered);
   if (!englishRendered.includes('Period composition') || !englishRendered.includes('Reasoning (within output)')) throw new Error('English dashboard composition copy missing: ' + englishRendered);
+  const englishTokenBandCell = findFirst(englishTree, node => node.type === 'td' && String(node.props?.className || '').includes('aum-band-'));
+  const visibleEnglishSplit = findAll(englishTokenBandCell, node => node.type === 'span' && node.props && node.props['data-token-kind']).map(flatten);
+  if (visibleEnglishSplit.join('|') !== 'Non-cache read 120|Cache read 119.9k') throw new Error('dashboard visible English row labels are not bound to their values: ' + visibleEnglishSplit.join('|'));
   sandbox.document.documentElement.lang = 'fr';
   if (rendered.includes('1970')) throw new Error('Unix seconds were rendered as milliseconds: ' + rendered);
   const chart = findFirst(render(), node => node.type === 'svg' && node.props && node.props.role === 'group');
@@ -370,5 +395,6 @@ function contrastRatio(foreground, background) {
   if (!calls.every(path => path.startsWith('/api/plugins/ai-usage-monitor/'))) {
     throw new Error('unexpected dashboard API destination');
   }
+  if (/\b(?:billable|cost|fresh)\b|uncached[- ]input/i.test(dashboardSource)) throw new Error('dashboard copy implies spend/provider charging semantics');
   console.log('dashboard bundle smoke: ok');
 })().catch(error => { console.error(error); process.exit(1); });
