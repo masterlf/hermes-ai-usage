@@ -22,14 +22,17 @@ const useQuery = options => {
   const key = options.queryKey || [];
   if (key.includes('account')) return { data: { account: { available: true, provider: 'openai-codex', windows: [{ label: 'Session', used_percent: null, remaining_percent: 35 }] } }, refetch: () => {} };
   if (key.includes('session')) return { data: { input: 1, output: 2, total: 3 }, refetch: () => {} };
-  if (key.includes('history')) return { data: { history: {
-    totals: { total_tokens: 170, api_calls: 3 },
+  if (key.includes('history')) {
+    globalThis.__historyOptions = options;
+    return { data: { history: {
+    totals: { input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170, api_calls: 3 },
     profile_scope: 'current',
-    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, total_tokens: 170 }],
+    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 }],
     partial: true,
     series: { bucket: 'day', bucket_seconds: 86400, points: [{ bucket_start: 1784851200, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }] },
-    rows: [{ started_at: 1784900000, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, total_tokens: 120000, session_ref: 'abcd12345678' }]
+    rows: [{ started_at: 1784900000, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 119880, cache_write_tokens: 0, total_tokens: 120000, session_ref: 'abcd12345678' }]
   } }, refetch: () => {} };
+  }
   return { data: null, refetch: () => {} };
 };
 const useValue = value => value;
@@ -68,18 +71,18 @@ vm.runInNewContext(source, sandbox);
 const compositionOf = sandbox.globalThis.__compositionOf;
 if (typeof compositionOf !== 'function') throw new Error('Desktop composition helper missing');
 const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
-if (normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('Desktop composition math is incorrect');
+if (normal.nonCacheRead !== 40 || normal.rawTotal !== 100 || normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('Desktop composition math is incorrect');
 if (normal.shareTenths.join(',') !== '100,200,600,100') throw new Error('Desktop top-level ratios are incorrect: ' + normal.shareTenths);
 const thirds = compositionOf({ input_tokens: 1, output_tokens: 1, cache_read_tokens: 1 });
 if (thirds.shareTenths.reduce((sum, value) => sum + value, 0) !== 1000) throw new Error('Desktop displayed ratios do not total 100.0%');
 const hostile = compositionOf({ input_tokens: -1, output_tokens: 2, reasoning_tokens: 99, cache_read_tokens: Infinity, cache_write_tokens: NaN });
-if (hostile.additiveTotal !== 2 || hostile.reasoning !== 2 || hostile.outputNonReasoning !== 0) throw new Error('Desktop hostile values were not normalized');
+if (hostile.nonCacheRead !== 2 || hostile.rawTotal !== 2 || hostile.additiveTotal !== 2 || hostile.reasoning !== 2 || hostile.outputNonReasoning !== 0) throw new Error('Desktop hostile values were not normalized');
 const zero = compositionOf({});
 if (zero.additiveTotal !== 0 || zero.shareTenths.some(value => value !== 0) || zero.reasoningOutputTenths !== 0) throw new Error('Desktop zero composition is not finite');
 const tiny = compositionOf({ input_tokens: 100, output_tokens: 100, cache_read_tokens: 99000, cache_write_tokens: 1 });
-if (tiny.additiveTotal !== 99201 || tiny.cacheWrite !== 1) throw new Error('Desktop tiny/huge-cache composition lost exact values');
+if (tiny.nonCacheRead !== 201 || tiny.rawTotal !== 99201 || tiny.additiveTotal !== 99201 || tiny.cacheWrite !== 1) throw new Error('Desktop tiny/huge-cache composition lost exact values');
 const overflow = compositionOf({ input_tokens: Number.MAX_VALUE, output_tokens: Number.MAX_VALUE, cache_read_tokens: Number.MAX_VALUE, cache_write_tokens: Number.MAX_VALUE, reasoning_tokens: Number.MAX_VALUE });
-if (!Number.isFinite(overflow.additiveTotal) || overflow.shareTenths.some(value => !Number.isFinite(value))) throw new Error('Desktop aggregate overflow was not bounded');
+if (!Number.isSafeInteger(overflow.nonCacheRead) || !Number.isSafeInteger(overflow.rawTotal) || !Number.isFinite(overflow.additiveTotal) || overflow.shareTenths.some(value => !Number.isFinite(value))) throw new Error('Desktop aggregate overflow was not bounded');
 if (overflow.shareTenths.reduce((sum, value) => sum + value, 0) !== 1000) throw new Error('Desktop bounded overflow ratios do not total 100.0%');
 const relativeLuminance = color => {
   const linear = color.slice(1).match(/.{2}/g).map(channel => parseInt(channel, 16) / 255).map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
@@ -91,8 +94,9 @@ const plugin = sandbox.globalThis.__plugin;
 if (!plugin || plugin.id !== 'ai-usage-monitor') throw new Error('desktop plugin export missing');
 let contributions;
 let i18n;
+const restCalls = [];
 plugin.register({
-  rest: () => Promise.resolve({}),
+  rest: path => { restCalls.push(path); return Promise.resolve({}); },
   i18n: { register: value => { i18n = value; sandbox.globalThis.__i18n = value; } },
   registerMany: value => { contributions = value; }
 });
@@ -163,16 +167,33 @@ if (interactionBars.map(bar => bar.props.tabIndex).join(',') !== '-1,0,-1') thro
 const focusOutline = findAll(interactionBars[1], node => node.type === 'rect' && node.props && node.props['data-focus-outline'])[0];
 if (!focusOutline || focusOutline.props.stroke === 'transparent') throw new Error('Desktop focused unselected bucket lacks an independent visible ring');
 if (!source.includes('max-[720px]:min-h-11') || !source.includes('max-[720px]:min-w-11')) throw new Error('Desktop narrow period targets are not durably 44x44');
+if (!source.includes('min-w-[680px]')) throw new Error('Desktop six-column profile table lacks a narrow-layout overflow floor');
 if (!source.includes("forcedColorAdjust: 'auto'")) throw new Error('Desktop forced-colors focus handling missing');
 sandbox.globalThis.__setHarnessStateful(false);
 const page = (contributions || []).find(item => item.id === 'page');
+resolveTree(page.render());
+if (!sandbox.globalThis.__historyOptions.queryKey.includes('all')) throw new Error('Desktop initial history scope is not all');
+sandbox.globalThis.__historyOptions.queryFn();
+if (!restCalls.some(path => path.includes('/history?') && path.includes('scope=all'))) throw new Error('Desktop initial all-profile request missing: ' + restCalls.join(', '));
+sandbox.globalThis.__setHarnessStateful(true);
+let scopeTree = resolveTree(page.render());
+let scopeSelector = findAll(scopeTree, node => node.type === 'select' && node.props && node.props['aria-label'])[0];
+if (!scopeSelector || scopeSelector.props.value !== 'all') throw new Error('Desktop all-profile selector state missing');
+scopeSelector.props.onChange({ target: { value: 'current' } });
+sandbox.globalThis.__resetHarnessCursor();
+scopeTree = resolveTree(page.render());
+scopeSelector = findAll(scopeTree, node => node.type === 'select' && node.props && node.props['aria-label'])[0];
+if (!scopeSelector || scopeSelector.props.value !== 'current') throw new Error('Desktop selector did not switch back to current profile');
+sandbox.globalThis.__historyOptions.queryFn();
+if (restCalls[restCalls.length - 1].includes('scope=all')) throw new Error('Desktop current-profile request retained all scope');
+sandbox.globalThis.__setHarnessStateful(false);
 const tree = resolveTree(page.render());
 const rendered = flatten(tree);
 if (!rendered.includes('Token usage')) throw new Error('Desktop usage chart missing: ' + rendered);
 if (!rendered.includes('Token usage · Profile: security')) throw new Error('Desktop current profile ownership missing from chart heading: ' + rendered);
 if (!rendered.includes('Period composition') || !rendered.includes('Reasoning (within output)')) throw new Error('Desktop composition summary missing: ' + rendered);
 if (!rendered.includes('Selected bucket sessions')) throw new Error('Desktop selected-bucket subtitle missing: ' + rendered);
-if (!rendered.includes('Period total: 170 tok · 3 calls')) throw new Error('Desktop period totals scope missing: ' + rendered);
+if (!rendered.includes('Non-cache-read tokens') || !rendered.includes('Cache-read tokens') || !rendered.includes('Raw total')) throw new Error('Desktop split token summary missing: ' + rendered);
 if (!rendered.includes('Log ref')) throw new Error('Desktop log reference label missing: ' + rendered);
 if (!rendered.includes('abcd12345678')) throw new Error('Desktop log reference missing: ' + rendered);
 if (!rendered.includes('65% used')) throw new Error('Desktop remaining-percent fallback missing: ' + rendered);
@@ -182,7 +203,7 @@ if (!rendered.includes('Usage by profile') || !rendered.includes('Partial data')
 const profileTable = findAll(tree, node => node.type === 'table' && node.props && node.props['aria-label'] === 'Usage by profile')[0];
 if (!profileTable) throw new Error('Desktop profile breakdown is not a native labelled table');
 const profileHeaders = findAll(profileTable, node => node.type === 'th').map(flatten);
-for (const header of ['Profile', 'Tokens', 'Calls', 'sessions']) {
+for (const header of ['Profile', 'Non-cache read', 'Cache read', 'Raw total', 'Calls', 'sessions']) {
   if (!profileHeaders.includes(header)) throw new Error('Desktop profile table header missing: ' + header);
 }
 if (!rendered.includes('account-level/shared')) throw new Error('Desktop shared quota wording missing: ' + rendered);
@@ -201,7 +222,7 @@ let spacePrevented = false;
 chartBar.props.onKeyDown({ key: ' ', preventDefault: () => { spacePrevented = true; } });
 if (!spacePrevented) throw new Error('Desktop chart Space handler did not prevent page scrolling');
 const mobileLabels = findAll(tree, node => node.type === 'span' && String(node.props.className || '').includes('md:hidden')).map(flatten);
-for (const label of ['When', 'Profile', 'Workload', 'Model · provider', 'Calls', 'Tokens', 'Log ref']) {
+for (const label of ['When', 'Profile', 'Workload', 'Model · provider', 'Calls', 'Token split', 'Log ref']) {
   if (!mobileLabels.includes(label)) throw new Error('Desktop mobile field label missing: ' + label);
 }
 const bandValues = findAll(tree, node => node.type === 'span' && node.props && node.props['data-token-band']);
@@ -212,6 +233,8 @@ const frenchRendered = flatten(page.render());
 if (!frenchRendered.includes('Utilisation des tokens · Profil : security')) throw new Error('French Desktop current profile ownership missing from chart heading: ' + frenchRendered);
 if (!frenchRendered.includes('2 min 05 s')) throw new Error('French Desktop duration was not localized: ' + frenchRendered);
 if (!frenchRendered.includes('Composition de la période') || !frenchRendered.includes('Raisonnement (dans la sortie)')) throw new Error('French Desktop composition copy missing: ' + frenchRendered);
+if (!frenchRendered.includes('Tokens hors lecture cache') || !frenchRendered.includes('Tokens lus du cache') || !frenchRendered.includes('Total brut')) throw new Error('French Desktop split token copy missing: ' + frenchRendered);
+if (/\b(?:billable|cost|fresh)\b|uncached[- ]input/i.test(source)) throw new Error('Desktop copy implies spend/provider charging semantics');
 const allProfilesChart = flatten(UsageChart({
   history: { ...chartHistory, profile_scope: 'all', profiles: [
     { profile: 'security', total_tokens: 170 },

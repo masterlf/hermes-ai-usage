@@ -5,6 +5,19 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- v0.7.0 initially selects All profiles in Desktop and Web while preserving the selected
+  scope across refresh, period changes, and bucket drill-downs.
+- Neutral `non_cache_read_tokens` presentation (`input_tokens + output_tokens +
+  cache_write_tokens`) now separates non-cache-read and cache-read counters throughout the
+  English/French UI, with raw total retained only as labelled secondary context.
+
+### Changed
+
+- Per-profile and recent-session views now expose non-cache read, cache read, raw total,
+  calls, and sessions explicitly; existing thresholds are labelled as raw-volume bands.
+
 ## [0.6.1] - 2026-08-24
 
 ### Fixed

@@ -33,7 +33,7 @@ function compactNumber(value) {
 
 function finiteToken(value) {
   const number = Number(value || 0)
-  return Number.isFinite(number) && number > 0 ? Math.min(number, Number.MAX_SAFE_INTEGER) : 0
+  return Number.isFinite(number) && number > 0 ? Math.min(number, Math.floor(Number.MAX_SAFE_INTEGER / 4)) : 0
 }
 
 function allocateShareTenths(values, total) {
@@ -56,9 +56,12 @@ function compositionOf(source = {}) {
   const cacheWrite = finiteToken(source.cache_write_tokens)
   const reasoning = Math.min(output, finiteToken(source.reasoning_tokens))
   const outputNonReasoning = output - reasoning
-  const additiveTotal = input + output + cacheRead + cacheWrite
+  const nonCacheRead = input + output + cacheWrite
+  const rawTotal = nonCacheRead + cacheRead
+  const additiveTotal = rawTotal
   return {
-    input, output, outputNonReasoning, reasoning, cacheRead, cacheWrite, additiveTotal,
+    input, output, outputNonReasoning, reasoning, cacheRead, cacheWrite,
+    nonCacheRead, rawTotal, additiveTotal,
     shareTenths: allocateShareTenths([input, output, cacheRead, cacheWrite], additiveTotal),
     reasoningOutputTenths: output > 0 ? Math.round(reasoning / output * 1000) : 0
   }
@@ -427,7 +430,7 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
   const percent = formatPercentTenths
   const firstDate = points.length ? formatBucket(points[0].bucket_start, history?.series?.bucket) : '—'
   const lastDate = points.length ? formatBucket(points[points.length - 1].bucket_start, history?.series?.bucket) : '—'
-  const summaryLabel = `${t('periodComposition')}: ${formatExactNumber(period.additiveTotal)} ${t('tokens')}. ${t('input')} ${percent(period.shareTenths[0])}; ${t('output')} ${percent(period.shareTenths[1])}, ${t('reasoningSubset')} ${formatExactNumber(period.reasoning)}; ${t('cacheRead')} ${percent(period.shareTenths[2])}; ${t('cacheWrite')} ${percent(period.shareTenths[3])}`
+  const summaryLabel = `${t('periodComposition')}: ${t('nonCacheReadTokens')} ${formatExactNumber(period.nonCacheRead)}; ${t('cacheReadTokens')} ${formatExactNumber(period.cacheRead)}; ${t('rawTotal')} ${formatExactNumber(period.rawTotal)}. ${t('input')} ${percent(period.shareTenths[0])}; ${t('output')} ${percent(period.shareTenths[1])}, ${t('reasoningSubset')} ${formatExactNumber(period.reasoning)}; ${t('cacheRead')} ${percent(period.shareTenths[2])}; ${t('cacheWrite')} ${percent(period.shareTenths[3])}`
   const metrics = [
     ['input', t('input'), period.input, period.shareTenths[0]],
     ['output', t('output'), period.output, period.shareTenths[1]],
@@ -481,7 +484,7 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
         children: jsxs('div', { children: [
           jsxs('div', { className: 'flex flex-col gap-1 text-xs sm:flex-row sm:justify-between', children: [
             jsx('strong', { children: t('periodComposition') }),
-            jsx('span', { className: 'tabular-nums text-(--ui-text-tertiary)', children: t('periodTotal', compactNumber(period.additiveTotal), firstDate, lastDate) })
+            jsx('span', { className: 'tabular-nums text-(--ui-text-tertiary)', children: t('periodTokenSplit', compactNumber(period.nonCacheRead), compactNumber(period.cacheRead), compactNumber(period.rawTotal), firstDate, lastDate) })
           ] }),
           jsx('div', {
             className: 'mt-2 flex h-4 overflow-hidden border border-(--ui-stroke-secondary) bg-(--ui-bg-secondary)',
@@ -554,7 +557,7 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
                 }, name)
               })
               const label = formatBucket(point.bucket_start, history?.series?.bucket)
-              const tooltip = `${t('bucketBreakdown', label)} · ${formatExactNumber(composition.additiveTotal)} ${t('tokens')} · ${compactNumber(point.sessions)} ${t('sessions')} · ${compactNumber(point.api_calls)} ${t('apiCalls')} · ${t('input')} ${formatExactNumber(composition.input)} ${percent(composition.shareTenths[0])} · ${t('output')} ${formatExactNumber(composition.output)} ${percent(composition.shareTenths[1])} · ${t('reasoningSubset')} ${formatExactNumber(composition.reasoning)} ${percent(composition.reasoningOutputTenths)} ${t('ofOutput')} · ${t('cacheRead')} ${formatExactNumber(composition.cacheRead)} ${percent(composition.shareTenths[2])} · ${t('cacheWrite')} ${formatExactNumber(composition.cacheWrite)} ${percent(composition.shareTenths[3])}`
+              const tooltip = `${t('bucketBreakdown', label)} · ${t('nonCacheReadTokens')} ${formatExactNumber(composition.nonCacheRead)} · ${t('cacheReadTokens')} ${formatExactNumber(composition.cacheRead)} · ${t('rawTotal')} ${formatExactNumber(composition.rawTotal)} · ${compactNumber(point.sessions)} ${t('sessions')} · ${compactNumber(point.api_calls)} ${t('apiCalls')} · ${t('input')} ${formatExactNumber(composition.input)} ${percent(composition.shareTenths[0])} · ${t('output')} ${formatExactNumber(composition.output)} ${percent(composition.shareTenths[1])} · ${t('reasoningSubset')} ${formatExactNumber(composition.reasoning)} ${percent(composition.reasoningOutputTenths)} ${t('ofOutput')} · ${t('cacheRead')} ${formatExactNumber(composition.cacheRead)} ${percent(composition.shareTenths[2])} · ${t('cacheWrite')} ${formatExactNumber(composition.cacheWrite)} ${percent(composition.shareTenths[3])}`
               return jsxs('g', {
                 role: 'button',
                 tabIndex: index === rovingIndex ? 0 : -1,
@@ -616,7 +619,7 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
 }
 
 function findTooltipText(point, composition, bucket, t, percent) {
-  return `${t('bucketBreakdown', formatBucket(point.bucket_start, bucket))} · ${formatExactNumber(composition.additiveTotal)} ${t('tokens')} · ${compactNumber(point.sessions)} ${t('sessions')} · ${compactNumber(point.api_calls)} ${t('apiCalls')} · ${t('input')} ${formatExactNumber(composition.input)} ${percent(composition.shareTenths[0])} · ${t('output')} ${formatExactNumber(composition.output)} ${percent(composition.shareTenths[1])} · ${t('reasoningSubset')} ${formatExactNumber(composition.reasoning)} ${percent(composition.reasoningOutputTenths)} ${t('ofOutput')} · ${t('cacheRead')} ${formatExactNumber(composition.cacheRead)} ${percent(composition.shareTenths[2])} · ${t('cacheWrite')} ${formatExactNumber(composition.cacheWrite)} ${percent(composition.shareTenths[3])}`
+  return `${t('bucketBreakdown', formatBucket(point.bucket_start, bucket))} · ${t('nonCacheReadTokens')} ${formatExactNumber(composition.nonCacheRead)} · ${t('cacheReadTokens')} ${formatExactNumber(composition.cacheRead)} · ${t('rawTotal')} ${formatExactNumber(composition.rawTotal)} · ${compactNumber(point.sessions)} ${t('sessions')} · ${compactNumber(point.api_calls)} ${t('apiCalls')} · ${t('input')} ${formatExactNumber(composition.input)} ${percent(composition.shareTenths[0])} · ${t('output')} ${formatExactNumber(composition.output)} ${percent(composition.shareTenths[1])} · ${t('reasoningSubset')} ${formatExactNumber(composition.reasoning)} ${percent(composition.reasoningOutputTenths)} ${t('ofOutput')} · ${t('cacheRead')} ${formatExactNumber(composition.cacheRead)} ${percent(composition.shareTenths[2])} · ${t('cacheWrite')} ${formatExactNumber(composition.cacheWrite)} ${percent(composition.shareTenths[3])}`
 }
 
 function ProfileBreakdown({ history }) {
@@ -624,16 +627,18 @@ function ProfileBreakdown({ history }) {
   const profiles = history?.profiles || []
   if (!profiles.length) return null
   return jsxs('section', {
-    className: 'rounded-md border border-(--ui-stroke-secondary) p-3',
+    className: 'overflow-x-auto rounded-md border border-(--ui-stroke-secondary) p-3',
     children: [
       jsx('h2', { className: 'font-medium', children: t('profileBreakdown') }),
       jsxs('table', {
-        className: 'mt-3 w-full text-sm',
+        className: 'mt-3 w-full min-w-[680px] text-sm',
         'aria-label': t('profileBreakdown'),
         children: [
           jsx('thead', { children: jsxs('tr', { children: [
             jsx('th', { scope: 'col', className: 'pb-2 text-left font-medium', children: t('profile') }),
-            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('tokens') }),
+            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('nonCacheRead') }),
+            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('cacheRead') }),
+            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('rawTotal') }),
             jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('calls') }),
             jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('sessions') })
           ] }) }),
@@ -641,7 +646,9 @@ function ProfileBreakdown({ history }) {
             className: 'border-t border-(--ui-stroke-secondary)',
             children: [
               jsx('th', { scope: 'row', className: 'py-2 text-left font-medium', children: profile.profile }),
-              jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(profile.total_tokens) }),
+              jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(compositionOf(profile).nonCacheRead) }),
+              jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(compositionOf(profile).cacheRead) }),
+              jsx('td', { className: 'py-2 text-right tabular-nums text-(--ui-text-tertiary)', children: compactNumber(compositionOf(profile).rawTotal) }),
               jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(profile.api_calls) }),
               jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(profile.sessions) })
             ]
@@ -684,7 +691,7 @@ function HistoryCard({ history, selectedBucket }) {
           }),
           jsx('span', {
             className: 'text-xs tabular-nums text-(--ui-text-quaternary)',
-            children: t('periodTotals', compactNumber(totals.total_tokens), compactNumber(totals.api_calls))
+            children: t('periodTotals', compactNumber(compositionOf(totals).nonCacheRead), compactNumber(compositionOf(totals).cacheRead), compactNumber(compositionOf(totals).rawTotal), compactNumber(totals.api_calls))
           })
         ]
       }),
@@ -694,17 +701,18 @@ function HistoryCard({ history, selectedBucket }) {
           className: 'text-xs',
           children: [
             jsxs('div', {
-              className: 'hidden grid-cols-[120px_100px_120px_1fr_60px_100px_110px] gap-2 border-b border-(--ui-stroke-secondary) pb-2 text-(--ui-text-tertiary) md:grid',
-              children: [t('when'), t('profile'), t('workload'), t('modelProvider'), t('calls'), t('tokens'), t('logsRef')].map(label => jsx('span', { children: label, key: label }))
+              className: 'hidden grid-cols-[120px_100px_120px_1fr_60px_180px_110px] gap-2 border-b border-(--ui-stroke-secondary) pb-2 text-(--ui-text-tertiary) md:grid',
+              children: [t('when'), t('profile'), t('workload'), t('modelProvider'), t('calls'), t('tokenSplit'), t('logsRef')].map(label => jsx('span', { children: label, key: label }))
             }),
             ...visibleRows.map((row, index) => {
-              const band = tokenBand(row.total_tokens, t)
+              const composition = compositionOf(row)
+              const band = tokenBand(composition.rawTotal, t)
               const mobileLabel = label => jsx('span', {
                 className: 'mb-1 block text-[0.65rem] uppercase tracking-wide text-(--ui-text-tertiary) md:hidden',
                 children: label
               })
               return jsxs('div', {
-                className: 'grid grid-cols-2 gap-2 border-b border-(--ui-stroke-secondary) py-3 last:border-0 md:grid-cols-[120px_100px_120px_1fr_60px_100px_110px]',
+                className: 'grid grid-cols-2 gap-2 border-b border-(--ui-stroke-secondary) py-3 last:border-0 md:grid-cols-[120px_100px_120px_1fr_60px_180px_110px]',
                 children: [
                   jsxs('span', { children: [mobileLabel(t('when')), formatDate(row.ended_at || row.started_at), jsx('small', { className: 'block text-(--ui-text-tertiary)', children: formatDuration(row.duration_seconds, row.is_active, t) })] }),
                   jsxs('span', { className: 'truncate text-(--ui-text-tertiary)', children: [mobileLabel(t('profile')), row.profile || '—'] }),
@@ -715,9 +723,9 @@ function HistoryCard({ history, selectedBucket }) {
                     className: 'text-right tabular-nums',
                     'data-token-band': band?.key || 'none',
                     style: tokenBandStyle(band?.key),
-                    title: `${t('input')} ${compactNumber(row.input_tokens)} · ${t('output')} ${compactNumber(row.output_tokens)} · ${t('cacheRead')} ${compactNumber(row.cache_read_tokens)} · ${t('cacheWrite')} ${compactNumber(row.cache_write_tokens)}`,
-                    'aria-label': band ? `${formatExactNumber(Number(row.total_tokens))} ${t('tokens')}, ${band.label}` : t('usageUnavailable'),
-                    children: [mobileLabel(t('tokens')), band ? `${compactNumber(row.total_tokens)} · ${band.label}` : '—']
+                    title: `${t('nonCacheReadTokens')} ${compactNumber(composition.nonCacheRead)} · ${t('cacheReadTokens')} ${compactNumber(composition.cacheRead)} · ${t('rawTotal')} ${compactNumber(composition.rawTotal)} · ${t('input')} ${compactNumber(composition.input)} · ${t('output')} ${compactNumber(composition.output)} · ${t('cacheWrite')} ${compactNumber(composition.cacheWrite)}`,
+                    'aria-label': band ? `${t('nonCacheReadTokens')} ${formatExactNumber(composition.nonCacheRead)}, ${t('cacheReadTokens')} ${formatExactNumber(composition.cacheRead)}, ${t('rawTotal')} ${formatExactNumber(composition.rawTotal)}, ${t('rawVolumeBand')} ${band.label}` : t('usageUnavailable'),
+                    children: [mobileLabel(t('tokenSplit')), band ? jsxs('span', { children: [jsx('b', { children: `${compactNumber(composition.nonCacheRead)} · ${compactNumber(composition.cacheRead)}` }), jsx('small', { className: 'block text-(--ui-text-tertiary)', children: `${t('rawTotal')} ${compactNumber(composition.rawTotal)} · ${t('rawVolumeBand')} ${band.label}` })] }) : '—']
                   }),
                   jsxs('span', { children: [mobileLabel(t('logsRef')), jsx('code', { className: 'select-all text-(--ui-text-secondary)', children: row.session_ref || '—' })] })
                 ],
@@ -735,7 +743,7 @@ function UsagePage() {
   const t = usePluginI18n(ID)
   const [days, setDays] = useState(7)
   const [selectedBucket, setSelectedBucket] = useState(null)
-  const [scope, setScope] = useState('current')
+  const [scope, setScope] = useState('all')
   const accountQuery = useAccountSnapshot()
   const sessionQuery = useSessionUsage()
   const historyQuery = useHistory(days, selectedBucket, scope)
@@ -851,6 +859,7 @@ export default {
         chartHint: 'UTC buckets · select a bar to isolate its sessions below.',
         periodComposition: 'Period composition',
         periodTotal: (total, start, end) => `${total} tokens · ${start}–${end} UTC`,
+        periodTokenSplit: (nonCache, cacheRead, raw, start, end) => `Non-cache-read tokens ${nonCache} · Cache-read tokens ${cacheRead} · Raw total ${raw} · ${start}–${end} UTC`,
         periodGroup: 'Token usage period',
         reasoningShare: (percent, value) => `Reasoning ${percent} of output · ${value}`,
         bucketBreakdown: date => `Token breakdown for ${date} UTC`,
@@ -870,6 +879,12 @@ export default {
         reasoningSubset: 'Reasoning (within output)',
         cacheRead: 'Cache read',
         cacheWrite: 'Cache write',
+        nonCacheRead: 'Non-cache read',
+        nonCacheReadTokens: 'Non-cache-read tokens',
+        cacheReadTokens: 'Cache-read tokens',
+        rawTotal: 'Raw total',
+        tokenSplit: 'Token split',
+        rawVolumeBand: 'Raw-volume band',
         apiCalls: 'API calls',
         context: 'Current context',
         noActiveSession: 'No active session',
@@ -879,7 +894,7 @@ export default {
         modelProvider: 'Model · provider',
         source: 'Surface',
         calls: 'Calls',
-        periodTotals: (tokens, calls) => `Period total: ${tokens} tok · ${calls} calls`,
+        periodTotals: (nonCache, cacheRead, raw, calls) => `Non-cache read: ${nonCache} · Cache read: ${cacheRead} · Raw total: ${raw} · ${calls} calls`,
         sessions: 'sessions',
         tokens: 'Tokens',
         bandLow: 'Low', bandModerate: 'Moderate', bandElevated: 'Elevated',
@@ -921,6 +936,7 @@ export default {
         chartHint: 'Créneaux UTC · sélectionne une barre pour isoler ses sessions ci-dessous.',
         periodComposition: 'Composition de la période',
         periodTotal: (total, start, end) => `${total} tokens · du ${start} au ${end} UTC`,
+        periodTokenSplit: (nonCache, cacheRead, raw, start, end) => `Tokens hors lecture cache ${nonCache} · Tokens lus du cache ${cacheRead} · Total brut ${raw} · du ${start} au ${end} UTC`,
         periodGroup: 'Période d’utilisation des tokens',
         reasoningShare: (percent, value) => `Raisonnement ${percent} de la sortie · ${value}`,
         bucketBreakdown: date => `Répartition des tokens pour le ${date} UTC`,
@@ -938,8 +954,14 @@ export default {
         output: 'Tokens en sortie',
         reasoning: 'Tokens de raisonnement',
         reasoningSubset: 'Raisonnement (dans la sortie)',
-        cacheRead: 'Cache lu',
+        cacheRead: 'Lecture cache',
         cacheWrite: 'Cache écrit',
+        nonCacheRead: 'Hors lecture cache',
+        nonCacheReadTokens: 'Tokens hors lecture cache',
+        cacheReadTokens: 'Tokens lus du cache',
+        rawTotal: 'Total brut',
+        tokenSplit: 'Répartition des tokens',
+        rawVolumeBand: 'Palier de volume brut',
         apiCalls: 'Appels API',
         context: 'Contexte actuel',
         noActiveSession: 'Aucune session active',
@@ -949,7 +971,7 @@ export default {
         modelProvider: 'Modèle · fournisseur',
         source: 'Surface',
         calls: 'Appels',
-        periodTotals: (tokens, calls) => `Total de la période : ${tokens} tok · ${calls} appels`,
+        periodTotals: (nonCache, cacheRead, raw, calls) => `Hors lecture cache : ${nonCache} · Lecture cache : ${cacheRead} · Total brut : ${raw} · ${calls} appels`,
         sessions: 'sessions',
         tokens: 'Tokens',
         bandLow: 'Faible', bandModerate: 'Modérée', bandElevated: 'Soutenue',

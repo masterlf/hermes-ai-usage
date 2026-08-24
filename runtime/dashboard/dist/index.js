@@ -40,14 +40,21 @@
         calls: "Appels API",
         input: "Entrée",
         output: "Sortie",
-        cached: "Cache lu",
-        total: "Tokens bruts",
+        cached: "Lecture cache",
+        cacheWrite: "Cache écrit",
+        nonCacheRead: "Hors lecture cache",
+        nonCacheReadTokens: "Tokens hors lecture cache",
+        cacheReadTokens: "Tokens lus du cache",
+        rawTotal: "Total brut",
+        tokenSplit: "Répartition des tokens",
+        rawVolumeBand: "Palier de volume brut",
         chart: "Utilisation des tokens",
         currentProfileOwnership: function (profile) { return "Profil : " + profile; },
         allProfileOwnership: function (count) { return "Tous les profils · " + count + (count === 1 ? " profil consommateur" : " profils consommateurs"); },
         chartHint: "Créneaux UTC · clique sur une barre pour isoler les sessions correspondantes.",
         periodComposition: "Composition de la période",
         periodTotal: function (total, start, end) { return total + " tokens · du " + start + " au " + end + " UTC"; },
+        periodTokenSplit: function (nonCache, cacheRead, raw, start, end) { return "Hors lecture cache " + nonCache + " · Lecture cache " + cacheRead + " · Total brut " + raw + " · du " + start + " au " + end + " UTC"; },
         periodGroup: "Période d’utilisation des tokens",
         reasoningShare: function (percent, value) { return "Raisonnement " + percent + " de la sortie · " + value; },
         bucketBreakdown: function (date) { return "Répartition des tokens pour le " + date + " UTC"; },
@@ -108,13 +115,20 @@
       input: "Input",
       output: "Output",
       cached: "Cache read",
-      total: "Raw tokens",
+      cacheWrite: "Cache write",
+      nonCacheRead: "Non-cache read",
+      nonCacheReadTokens: "Non-cache-read tokens",
+      cacheReadTokens: "Cache-read tokens",
+      rawTotal: "Raw total",
+      tokenSplit: "Token split",
+      rawVolumeBand: "Raw-volume band",
       chart: "Token usage",
       currentProfileOwnership: function (profile) { return "Profile: " + profile; },
       allProfileOwnership: function (count) { return "All profiles · " + count + " consuming " + (count === 1 ? "profile" : "profiles"); },
       chartHint: "UTC buckets · select a bar to isolate the matching sessions.",
       periodComposition: "Period composition",
       periodTotal: function (total, start, end) { return total + " tokens · " + start + "–" + end + " UTC"; },
+      periodTokenSplit: function (nonCache, cacheRead, raw, start, end) { return "Non-cache read " + nonCache + " · Cache read " + cacheRead + " · Raw total " + raw + " · " + start + "–" + end + " UTC"; },
       periodGroup: "Token usage period",
       reasoningShare: function (percent, value) { return "Reasoning " + percent + " of output · " + value; },
       bucketBreakdown: function (date) { return "Token breakdown for " + date + " UTC"; },
@@ -161,7 +175,7 @@
 
   function finiteToken(value) {
     const number = Number(value || 0);
-    return Number.isFinite(number) && number > 0 ? Math.min(number, Number.MAX_SAFE_INTEGER) : 0;
+    return Number.isFinite(number) && number > 0 ? Math.min(number, Math.floor(Number.MAX_SAFE_INTEGER / 4)) : 0;
   }
 
   function allocateShareTenths(values, total) {
@@ -186,11 +200,13 @@
     const cacheWrite = finiteToken(source.cache_write_tokens);
     const reasoning = Math.min(output, finiteToken(source.reasoning_tokens));
     const outputNonReasoning = output - reasoning;
-    const additiveTotal = input + output + cacheRead + cacheWrite;
+    const nonCacheRead = input + output + cacheWrite;
+    const rawTotal = nonCacheRead + cacheRead;
+    const additiveTotal = rawTotal;
     return {
       input: input, output: output, outputNonReasoning: outputNonReasoning,
       reasoning: reasoning, cacheRead: cacheRead, cacheWrite: cacheWrite,
-      additiveTotal: additiveTotal,
+      nonCacheRead: nonCacheRead, rawTotal: rawTotal, additiveTotal: additiveTotal,
       shareTenths: allocateShareTenths([input, output, cacheRead, cacheWrite], additiveTotal),
       reasoningOutputTenths: output > 0 ? Math.round(reasoning / output * 1000) : 0
     };
@@ -279,7 +295,7 @@
   }
 
   function Stat(props) {
-    return h("div", { className: "aum-stat" },
+    return h("div", { className: "aum-stat" + (props.secondary ? " is-secondary" : "") },
       h("div", { className: "aum-stat-label" }, props.label),
       h("div", { className: "aum-stat-value" }, props.value)
     );
@@ -336,16 +352,19 @@
       ? historyDays
       : props.days;
     const t = props.t;
+    const composition = compositionOf(totals);
     return h("section", { className: "aum-card" },
       h("h2", { className: "aum-card-title" }, t.stats(scopeDays)),
       h("p", { className: "aum-card-meta" }, t.source),
       h("div", { className: "aum-stats" },
         h(Stat, { label: t.sessions, value: compact(totals.sessions) }),
         h(Stat, { label: t.calls, value: compact(totals.api_calls) }),
+        h(Stat, { label: t.nonCacheReadTokens, value: compact(composition.nonCacheRead) }),
+        h(Stat, { label: t.cacheReadTokens, value: compact(composition.cacheRead) }),
+        h(Stat, { label: t.rawTotal, value: compact(composition.rawTotal), secondary: true }),
         h(Stat, { label: t.input, value: compact(totals.input_tokens) }),
         h(Stat, { label: t.output, value: compact(totals.output_tokens) }),
-        h(Stat, { label: t.cached, value: compact(totals.cache_read_tokens) }),
-        h(Stat, { label: t.total, value: compact(totals.total_tokens) })
+        h(Stat, { label: t.cacheWrite, value: compact(totals.cache_write_tokens) })
       )
     );
   }
@@ -361,14 +380,19 @@
       },
         h("thead", null, h("tr", null,
           h("th", null, props.t.profile),
-          h("th", { className: "aum-num" }, props.t.total),
+          h("th", { className: "aum-num" }, props.t.nonCacheRead),
+          h("th", { className: "aum-num" }, props.t.cached),
+          h("th", { className: "aum-num" }, props.t.rawTotal),
           h("th", { className: "aum-num" }, props.t.calls),
           h("th", { className: "aum-num" }, props.t.sessions)
         )),
         h("tbody", null, profiles.map(function (profile) {
+          const composition = compositionOf(profile);
           return h("tr", { key: profile.profile },
             h("td", { "data-label": props.t.profile }, profile.profile),
-            h("td", { className: "aum-num", "data-label": props.t.total }, compact(profile.total_tokens)),
+            h("td", { className: "aum-num", "data-label": props.t.nonCacheRead }, compact(composition.nonCacheRead)),
+            h("td", { className: "aum-num", "data-label": props.t.cached }, compact(composition.cacheRead)),
+            h("td", { className: "aum-num aum-secondary", "data-label": props.t.rawTotal }, compact(composition.rawTotal)),
             h("td", { className: "aum-num", "data-label": props.t.calls }, compact(profile.api_calls)),
             h("td", { className: "aum-num", "data-label": props.t.sessions }, compact(profile.sessions))
           );
@@ -473,13 +497,14 @@
       h("div", { className: "aum-composition" },
         h("div", { className: "aum-composition-head" },
           h("strong", null, t.periodComposition),
-          h("span", null, t.periodTotal(compact(period.additiveTotal), firstDate, lastDate))
+          h("span", null, t.periodTokenSplit(compact(period.nonCacheRead), compact(period.cacheRead), compact(period.rawTotal), firstDate, lastDate))
         ),
         h("div", {
           className: "aum-composition-strip",
           role: "img",
           "aria-label": period.additiveTotal
-            ? t.periodComposition + ": " + formatExactNumber(period.additiveTotal) + " " + t.tokens + "; "
+            ? t.periodComposition + ": " + t.nonCacheReadTokens + " " + formatExactNumber(period.nonCacheRead) + "; "
+              + t.cacheReadTokens + " " + formatExactNumber(period.cacheRead) + "; " + t.rawTotal + " " + formatExactNumber(period.rawTotal) + "; "
               + t.inputLegend + " " + percent(period.shareTenths[0]) + "; "
               + t.outputLegend + " " + percent(period.shareTenths[1]) + ", " + t.reasoningLegend + " " + formatExactNumber(period.reasoning) + "; "
               + t.cacheReadLegend + " " + percent(period.shareTenths[2]) + "; " + t.cacheWriteLegend + " " + percent(period.shareTenths[3])
@@ -549,7 +574,8 @@
               });
             });
             const label = formatBucket(point.bucket_start, series.bucket);
-            const tooltip = t.bucketBreakdown(label) + " · " + formatExactNumber(composition.additiveTotal) + " " + t.tokens
+            const tooltip = t.bucketBreakdown(label) + " · " + t.nonCacheReadTokens + " " + formatExactNumber(composition.nonCacheRead)
+              + " · " + t.cacheReadTokens + " " + formatExactNumber(composition.cacheRead) + " · " + t.rawTotal + " " + formatExactNumber(composition.rawTotal)
               + " · " + t.inputLegend + " " + formatExactNumber(composition.input) + " " + percent(composition.shareTenths[0])
               + " · " + t.outputLegend + " " + formatExactNumber(composition.output) + " " + percent(composition.shareTenths[1])
               + " · " + t.reasoningLegend + " " + formatExactNumber(composition.reasoning) + " " + percent(composition.reasoningOutputTenths) + " " + t.ofOutput
@@ -606,7 +632,8 @@
   }
 
   function bucketTooltip(point, composition, bucket, t, percent) {
-    return t.bucketBreakdown(formatBucket(point.bucket_start, bucket)) + " · " + formatExactNumber(composition.additiveTotal) + " " + t.tokens
+    return t.bucketBreakdown(formatBucket(point.bucket_start, bucket)) + " · " + t.nonCacheReadTokens + " " + formatExactNumber(composition.nonCacheRead)
+      + " · " + t.cacheReadTokens + " " + formatExactNumber(composition.cacheRead) + " · " + t.rawTotal + " " + formatExactNumber(composition.rawTotal)
       + " · " + compact(point.sessions) + " " + t.sessions + " · " + compact(point.api_calls) + " " + t.calls
       + " · " + t.inputLegend + " " + formatExactNumber(composition.input) + " " + percent(composition.shareTenths[0])
       + " · " + t.outputLegend + " " + formatExactNumber(composition.output) + " " + percent(composition.shareTenths[1])
@@ -645,15 +672,18 @@
             h("th", null, t.workload),
             h("th", null, t.model),
             h("th", { className: "aum-num" }, t.calls),
-            h("th", { className: "aum-num" }, t.tokens),
+            h("th", { className: "aum-num" }, t.tokenSplit),
             h("th", null, t.logRef)
           )),
           h("tbody", null, visibleRows.map(function (row, index) {
-            const band = tokenBand(row.total_tokens, t);
-            const tokenDetail = t.inputLegend + " " + compact(row.input_tokens)
-              + " · " + t.outputLegend + " " + compact(row.output_tokens)
-              + " · " + t.cacheReadLegend + " " + compact(row.cache_read_tokens)
-              + " · " + t.cacheWriteLegend + " " + compact(row.cache_write_tokens)
+            const composition = compositionOf(row);
+            const band = tokenBand(composition.rawTotal, t);
+            const tokenDetail = t.nonCacheReadTokens + " " + compact(composition.nonCacheRead)
+              + " · " + t.cacheReadTokens + " " + compact(composition.cacheRead)
+              + " · " + t.rawTotal + " " + compact(composition.rawTotal)
+              + " · " + t.inputLegend + " " + compact(composition.input)
+              + " · " + t.outputLegend + " " + compact(composition.output)
+              + " · " + t.cacheWriteLegend + " " + compact(composition.cacheWrite)
               + (row.reasoning_tokens ? " · " + t.reasoningLegend + " " + compact(row.reasoning_tokens) : "");
             return h("tr", { key: row.session_ref || (row.ended_at || row.started_at || "session") + "-" + index },
               h("td", { "data-label": t.date }, formatDate(row.ended_at || row.started_at), h("small", { className: "aum-duration" }, formatDuration(row.duration_seconds, row.is_active, t))),
@@ -664,9 +694,12 @@
               h("td", {
                 className: "aum-num aum-band-" + (band ? band.key : "none"),
                 title: tokenDetail,
-                "aria-label": band ? formatExactNumber(Number(row.total_tokens)) + " " + t.tokens + ", " + band.label : t.usageUnavailable,
-                "data-label": t.tokens
-              }, band ? compact(row.total_tokens) + " · " + band.label : "—"),
+                "aria-label": band ? t.nonCacheReadTokens + " " + formatExactNumber(composition.nonCacheRead) + ", " + t.cacheReadTokens + " " + formatExactNumber(composition.cacheRead) + ", " + t.rawTotal + " " + formatExactNumber(composition.rawTotal) + ", " + t.rawVolumeBand + " " + band.label : t.usageUnavailable,
+                "data-label": t.tokenSplit
+              }, band ? h("span", null,
+                h("b", null, compact(composition.nonCacheRead) + " · " + compact(composition.cacheRead)),
+                h("small", { className: "aum-duration" }, t.rawTotal + " " + compact(composition.rawTotal) + " · " + t.rawVolumeBand + " " + band.label)
+              ) : "—"),
               h("td", { "data-label": t.logRef }, row.session_ref ? h("code", { className: "aum-session-ref", title: t.logRef }, row.session_ref) : "—")
             );
           }))
@@ -683,7 +716,7 @@
     const periodState = React.useState(7);
     const days = periodState[0];
     const setDays = periodState[1];
-    const scopeState = React.useState("current");
+    const scopeState = React.useState("all");
     const scope = scopeState[0];
     const setScope = scopeState[1];
     const selectionState = React.useState(null);
