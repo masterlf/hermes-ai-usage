@@ -5,6 +5,20 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-24
+
+### Fixed
+
+- v0.6.1 shows canonical current-profile ownership or the count of consuming profiles
+  directly beside the Desktop and Web token-chart title, including truthful zero-usage
+  English/French states and the current-profile breakdown.
+
+### Security
+
+- Current-profile attribution now comes only from an exact canonical default or strict
+  named-profile database path; stored profile labels, symlinks, path escapes, and invalid
+  profile slugs cannot invent ownership. Provider quota remains account-level/shared.
+
 ## [0.6.0] - 2026-08-23
 
 ### Added
@@ -96,7 +110,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only provider-quota snapshots and seven-day token history.
 - French and English UI text.
 
-[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.6.1
 [0.6.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.6.0
 [0.5.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.5.0
 [0.4.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.4.0

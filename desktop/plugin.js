@@ -368,6 +368,13 @@ function SessionCard({ usage, sessionId }) {
 function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
   const t = usePluginI18n(ID)
   const points = history?.series?.points || []
+  const profiles = history?.profiles || []
+  const ownership = history?.profile_scope === 'all'
+    ? t('allProfileOwnership', profiles.filter(profile => Number(profile.total_tokens) > 0).length)
+    : history?.profile_scope === 'current' && profiles[0]?.profile
+      ? t('currentProfileOwnership', profiles[0].profile)
+      : null
+  const chartLabel = ownership ? `${t('usageChart')} · ${ownership}` : t('usageChart')
   const preferredRovingIndex = Math.max(0, selectedBucket === null
     ? points.findIndex(point => compositionOf(point).additiveTotal > 0)
     : points.findIndex(point => Number(point.bucket_start) === selectedBucket))
@@ -446,7 +453,7 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
         children: [
           jsxs('div', {
             children: [
-              jsx('h2', { className: 'font-medium', children: t('usageChart') }),
+              jsx('h2', { className: 'font-medium', children: chartLabel }),
               jsx('p', { className: 'text-xs text-(--ui-text-tertiary)', children: t('chartHint') })
             ]
           }),
@@ -515,7 +522,7 @@ function UsageChart({ history, days, selectedBucket, onDays, onSelect }) {
           className: 'block h-[220px] max-w-none',
           style: { width: `${width}px` },
           role: 'group',
-          'aria-label': t('usageChart'),
+          'aria-label': chartLabel,
           children: [
             jsx('defs', { children: jsx('pattern', {
               id: patternId, patternUnits: 'userSpaceOnUse', width: 5, height: 5, patternTransform: 'rotate(135)',
@@ -839,6 +846,8 @@ export default {
         filteredHistory: 'Selected bucket sessions.',
         truncatedHistory: 'Bounded results: some sessions in this bucket are not displayed.',
         usageChart: 'Token usage',
+        currentProfileOwnership: profile => `Profile: ${profile}`,
+        allProfileOwnership: count => `All profiles · ${count} consuming ${count === 1 ? 'profile' : 'profiles'}`,
         chartHint: 'UTC buckets · select a bar to isolate its sessions below.',
         periodComposition: 'Period composition',
         periodTotal: (total, start, end) => `${total} tokens · ${start}–${end} UTC`,
@@ -907,6 +916,8 @@ export default {
         filteredHistory: 'Sessions du créneau sélectionné.',
         truncatedHistory: 'Résultats bornés : certaines sessions du créneau ne sont pas affichées.',
         usageChart: 'Utilisation des tokens',
+        currentProfileOwnership: profile => `Profil : ${profile}`,
+        allProfileOwnership: count => `Tous les profils · ${count} ${count === 1 ? 'profil consommateur' : 'profils consommateurs'}`,
         chartHint: 'Créneaux UTC · sélectionne une barre pour isoler ses sessions ci-dessous.',
         periodComposition: 'Composition de la période',
         periodTotal: (total, start, end) => `${total} tokens · du ${start} au ${end} UTC`,

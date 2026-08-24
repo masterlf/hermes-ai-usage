@@ -614,6 +614,118 @@ class HistoryTests(unittest.TestCase):
         self.assertFalse(payload["available"])
         self.assertNotIn("secret filesystem detail", payload["reason"])
 
+    def test_current_profile_ownership_uses_canonical_default_database_not_stored_label(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._create_current_state_db(root)
+            database = sqlite3.connect(root / "state.db")
+            database.execute(
+                """INSERT INTO sessions VALUES (
+                    'default_current_session_12345678', 'cli', 'gpt-test', 'openai-codex',
+                    1000, 1010, 10, 0, 0, 0, 0, 1, 'spoofed', NULL, NULL, NULL,
+                    'secret title', '/secret/path', 'secret prompt', 'secret-chat'
+                )"""
+            )
+            database.commit()
+            database.close()
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module, "get_hermes_home", lambda: root),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                payload = module._current_profile_history(7, 30)
+
+        self.assertEqual(payload["profile_scope"], "current")
+        self.assertEqual(payload["profiles"][0]["profile"], "default")
+        self.assertEqual(payload["profiles"][0]["total_tokens"], 10)
+        self.assertEqual(payload["rows"][0]["profile"], "default")
+        self.assertNotIn("spoofed", json.dumps(payload))
+
+    def test_current_named_profile_and_zero_usage_remain_explicit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            alpha = root / "profiles" / "alpha"
+            alpha.mkdir(parents=True)
+            self._create_state_db(alpha)
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module, "get_hermes_home", lambda: alpha),
+            ):
+                payload = module._current_profile_history(7, 30)
+
+        self.assertTrue(payload["available"])
+        self.assertEqual(payload["profile_scope"], "current")
+        self.assertEqual(
+            payload["profiles"],
+            [{
+                "profile": "alpha",
+                "sessions": 0,
+                "api_calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+                "total_tokens": 0,
+            }],
+        )
+
+    def test_current_profile_identity_rejects_outside_noncanonical_and_symlink_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            profiles = root / "profiles"
+            alpha = profiles / "alpha"
+            outside = Path(tmp) / "outside"
+            alpha.mkdir(parents=True)
+            outside.mkdir()
+            self._create_state_db(alpha)
+            self._create_state_db(outside)
+            linked = profiles / "linked"
+            linked.symlink_to(outside, target_is_directory=True)
+            uppercase = profiles / "UpperCase"
+            uppercase.mkdir()
+            self._create_state_db(uppercase)
+            database_link_home = profiles / "db-link"
+            database_link_home.mkdir()
+            (database_link_home / "state.db").symlink_to(outside / "state.db")
+            with mock.patch.object(module, "get_default_hermes_root", lambda: root):
+                self.assertIsNone(module._current_profile_identity(outside / "state.db"))
+                self.assertIsNone(module._current_profile_identity(linked / "state.db"))
+                self.assertIsNone(module._current_profile_identity(uppercase / "state.db"))
+                self.assertIsNone(
+                    module._current_profile_identity(database_link_home / "state.db")
+                )
+                self.assertEqual(module._current_profile_identity(alpha / "state.db"), "alpha")
+
+    def test_invalid_current_path_omits_ownership_and_stored_profile_attribution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            outside = Path(tmp) / "outside"
+            root.mkdir()
+            outside.mkdir()
+            self._create_current_state_db(outside)
+            database = sqlite3.connect(outside / "state.db")
+            database.execute(
+                """INSERT INTO sessions VALUES (
+                    'outside_current_session_12345678', 'cli', 'gpt-test', 'openai-codex',
+                    1000, 1010, 10, 0, 0, 0, 0, 1, 'trusted-looking', NULL, NULL, NULL,
+                    NULL, NULL, NULL, NULL
+                )"""
+            )
+            database.commit()
+            database.close()
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module, "get_hermes_home", lambda: outside),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                payload = module._current_profile_history(7, 30)
+
+        self.assertEqual(payload["profile_scope"], "current")
+        self.assertNotIn("profiles", payload)
+        self.assertIsNone(payload["rows"][0]["profile"])
+        self.assertNotIn("trusted-looking", json.dumps(payload))
+
     def test_connection_rejects_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -976,6 +1088,7 @@ class RouteTests(unittest.TestCase):
             module._account_cache.clear()
             with (
                 mock.patch.object(module, "get_hermes_home", lambda: home),
+                mock.patch.object(module, "get_default_hermes_root", lambda: home),
                 mock.patch.object(module, "fetch_account_usage", lambda _provider: FakeSnapshot()),
             ):
                 client = TestClient(app)
@@ -990,6 +1103,8 @@ class RouteTests(unittest.TestCase):
         self.assertTrue(snapshot_response.json()["account"]["available"])
         self.assertEqual(history_response.status_code, 200)
         self.assertTrue(history_response.json()["history"]["available"])
+        self.assertEqual(history_response.json()["history"]["profile_scope"], "current")
+        self.assertEqual(history_response.json()["history"]["profiles"][0]["profile"], "default")
         self.assertEqual(history_response.json()["history"]["rows"][0]["model"], "gpt-test")
         self.assertEqual(
             history_response.json()["history"]["rows"][0]["session_ref"],
