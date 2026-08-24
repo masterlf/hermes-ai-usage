@@ -22,6 +22,7 @@ const snapshot = {
 const history = {
   history: {
     days: 7,
+    profile_scope: 'current',
     totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, total_tokens: 170 },
     profiles: [{ profile: 'security', sessions: 2, api_calls: 3, total_tokens: 170 }],
     partial: true,
@@ -80,6 +81,17 @@ const sandbox = {
               rows: [{ ...history.history.rows[0], model: 'stale-model' }]
             } });
           });
+        }
+        if (path.includes('scope=all')) {
+          return Promise.resolve({ history: {
+            ...history.history,
+            profile_scope: 'all',
+            profiles: [
+              { profile: 'security', sessions: 2, api_calls: 3, total_tokens: 170 },
+              { profile: 'alpha', sessions: 1, api_calls: 1, total_tokens: 50 },
+              { profile: 'idle', sessions: 0, api_calls: 0, total_tokens: 0 }
+            ]
+          } });
         }
         if (path.includes('days=30')) {
           return Promise.resolve({ history: {
@@ -158,12 +170,15 @@ function contrastRatio(foreground, background) {
   const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
   const instrumentedSource = dashboardSource.replace(
     'registry.register("ai-usage-monitor", AIUsagePage);',
-    'window.__compositionOf = compositionOf; registry.register("ai-usage-monitor", AIUsagePage);'
+    'window.__compositionOf = compositionOf; window.__UsageChart = UsageChart; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
   );
   vm.runInNewContext(instrumentedSource, sandbox);
   const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
   const compositionOf = sandbox.window.__compositionOf;
+  const UsageChart = sandbox.window.__UsageChart;
+  const textForTest = sandbox.window.__text;
   if (typeof compositionOf !== 'function') throw new Error('dashboard composition helper missing');
+  if (typeof UsageChart !== 'function') throw new Error('dashboard UsageChart test export missing');
   const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
   if (normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('dashboard composition math is incorrect');
   if (normal.shareTenths.join(',') !== '100,200,600,100') throw new Error('dashboard top-level ratios are incorrect: ' + normal.shareTenths);
@@ -227,6 +242,21 @@ function contrastRatio(foreground, background) {
   if (!rendered.includes('65% utilisés')) throw new Error('provider used fallback was not rendered');
   if (!rendered.includes('gpt-test')) throw new Error('history row was not rendered: ' + rendered);
   if (!rendered.includes('Utilisation des tokens')) throw new Error('usage chart was not rendered: ' + rendered);
+  if (!rendered.includes('Utilisation des tokens · Profil : security')) throw new Error('French dashboard current profile ownership missing from chart heading: ' + rendered);
+  stateCursor = 0;
+  const zeroCurrentChart = flatten(UsageChart({
+    history: {
+      profile_scope: 'current',
+      profiles: [{ profile: 'default', total_tokens: 0 }],
+      series: { bucket: 'day', points: [] }
+    },
+    t: textForTest(),
+    days: 7,
+    selectedBucket: null,
+    onDays: function () {},
+    onSelect: function () {}
+  }));
+  if (!zeroCurrentChart.includes('Utilisation des tokens · Profil : default')) throw new Error('dashboard zero usage omitted selected profile: ' + zeroCurrentChart);
   if (!rendered.includes('Composition de la période') || !rendered.includes('Raisonnement (dans la sortie)')) throw new Error('French dashboard composition summary missing: ' + rendered);
   const periodButtons = findAll(render(), node => node.type === 'button' && node.props && typeof node.props.onClick === 'function');
   const thirtyDayButton = periodButtons.find(node => flatten(node).includes('30d'));
@@ -257,6 +287,7 @@ function contrastRatio(foreground, background) {
   if (!rendered.includes('2 min 05 s')) throw new Error('session duration was not rendered: ' + rendered);
   sandbox.document.documentElement.lang = 'en';
   const englishRendered = flatten(render());
+  if (!englishRendered.includes('Token usage · Profile: security')) throw new Error('English dashboard current profile ownership missing from chart heading: ' + englishRendered);
   if (!englishRendered.includes('2m 05s')) throw new Error('English session duration was not localized: ' + englishRendered);
   if (!englishRendered.includes('Period composition') || !englishRendered.includes('Reasoning (within output)')) throw new Error('English dashboard composition copy missing: ' + englishRendered);
   sandbox.document.documentElement.lang = 'fr';
@@ -334,6 +365,8 @@ function contrastRatio(foreground, background) {
   effect();
   await new Promise(resolve => setImmediate(resolve));
   if (!calls.some(path => path.includes('/history?') && path.includes('scope=all'))) throw new Error('all-profile request missing: ' + calls.join(', '));
+  const allProfilesRendered = flatten(render());
+  if (!allProfilesRendered.includes('Utilisation des tokens · Tous les profils · 2 profils consommateurs')) throw new Error('dashboard all-profile consuming count is not truthful: ' + allProfilesRendered);
   if (!calls.every(path => path.startsWith('/api/plugins/ai-usage-monitor/'))) {
     throw new Error('unexpected dashboard API destination');
   }

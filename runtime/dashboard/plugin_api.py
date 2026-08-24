@@ -267,6 +267,37 @@ def _readonly_connection(db_path: Path) -> sqlite3.Connection:
     return connection
 
 
+def _current_profile_identity(db_path: Path) -> str | None:
+    """Derive current ownership only from an exact canonical Hermes database path."""
+    try:
+        if db_path.name != "state.db":
+            return None
+        root = Path(get_default_hermes_root()).resolve(strict=True)
+        home = db_path.parent
+        home_stat = home.lstat()
+        db_stat = db_path.lstat()
+        if stat.S_ISLNK(home_stat.st_mode) or not stat.S_ISDIR(home_stat.st_mode):
+            return None
+        if stat.S_ISLNK(db_stat.st_mode) or not stat.S_ISREG(db_stat.st_mode):
+            return None
+        if home.resolve(strict=True) != home or db_path.resolve(strict=True) != db_path:
+            return None
+        db_path.relative_to(root)
+        if home == root:
+            return "default"
+        profiles_root = root / "profiles"
+        profiles_stat = profiles_root.lstat()
+        if stat.S_ISLNK(profiles_stat.st_mode) or not stat.S_ISDIR(profiles_stat.st_mode):
+            return None
+        if profiles_root.resolve(strict=True) != profiles_root or home.parent != profiles_root:
+            return None
+        if not _PROFILE_HOME_RE.fullmatch(home.name) or home.name == "default":
+            return None
+        return home.name
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
 def _discover_profile_databases() -> tuple[list[tuple[str, Path]], list[dict[str, Any]], bool]:
     """Return root-owned profile databases without following profile symlinks."""
     failures: list[dict[str, Any]] = []
@@ -560,6 +591,7 @@ def _token_history(
     *,
     db_path: Path | None = None,
     profile_identity: str | None = None,
+    use_stored_profile: bool = True,
 ) -> dict[str, Any]:
     db_path = db_path or Path(get_hermes_home()) / "state.db"
     now = time.time()
@@ -749,7 +781,11 @@ def _token_history(
         provider = _safe_provider(row.pop("billing_provider", None)) or "unknown"
         surface = _safe_surface(row.pop("source_raw", None))
         stored_profile = _safe_profile(row.pop("profile_raw", None))
-        profile = profile_identity or stored_profile
+        profile = (
+            stored_profile
+            if use_stored_profile and profile_identity is None
+            else profile_identity
+        )
         workload_type = _workload_type(
             surface,
             row.pop("is_delegate", 0),
@@ -785,6 +821,36 @@ def _token_history(
         "totals": totals,
         "series": _history_series_shape(days, points),
     }
+
+
+def _current_profile_history(
+    days: int,
+    limit: int,
+    bucket_start: int | None = None,
+) -> dict[str, Any]:
+    try:
+        db_path = Path(get_hermes_home()) / "state.db"
+    except (OSError, RuntimeError, TypeError, ValueError):
+        db_path = Path("/__hermes_profile_unavailable__/state.db")
+    profile = _current_profile_identity(db_path)
+    payload = _token_history(
+        days,
+        limit,
+        bucket_start,
+        db_path=db_path,
+        profile_identity=profile,
+        use_stored_profile=False,
+    )
+    payload["profile_scope"] = "current"
+    payload["provider_quota_scope"] = "account_shared_not_attributed"
+    if profile is not None and payload.get("available"):
+        totals = payload.get("totals", {})
+        summary = {
+            key: _nonnegative_int(totals.get(key))
+            for key in ("sessions", "api_calls", *_TOKEN_FIELDS, "total_tokens")
+        }
+        payload["profiles"] = [{"profile": profile, **summary}]
+    return payload
 
 
 def _all_profiles_history(days: int, limit: int, bucket_start: int | None = None) -> dict[str, Any]:
@@ -927,7 +993,7 @@ def history(
         payload = (
             _all_profiles_history(days, limit, bucket_start)
             if scope == "all"
-            else _token_history(days, limit, bucket_start)
+            else _current_profile_history(days, limit, bucket_start)
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="invalid history bucket") from exc

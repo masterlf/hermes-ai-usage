@@ -43,6 +43,8 @@
         cached: "Cache lu",
         total: "Tokens bruts",
         chart: "Utilisation des tokens",
+        currentProfileOwnership: function (profile) { return "Profil : " + profile; },
+        allProfileOwnership: function (count) { return "Tous les profils · " + count + (count === 1 ? " profil consommateur" : " profils consommateurs"); },
         chartHint: "Créneaux UTC · clique sur une barre pour isoler les sessions correspondantes.",
         periodComposition: "Composition de la période",
         periodTotal: function (total, start, end) { return total + " tokens · du " + start + " au " + end + " UTC"; },
@@ -108,6 +110,8 @@
       cached: "Cache read",
       total: "Raw tokens",
       chart: "Token usage",
+      currentProfileOwnership: function (profile) { return "Profile: " + profile; },
+      allProfileOwnership: function (count) { return "All profiles · " + count + " consuming " + (count === 1 ? "profile" : "profiles"); },
       chartHint: "UTC buckets · select a bar to isolate the matching sessions.",
       periodComposition: "Period composition",
       periodTotal: function (total, start, end) { return total + " tokens · " + start + "–" + end + " UTC"; },
@@ -377,6 +381,13 @@
     const history = props.history || {};
     const series = history.series || {};
     const points = series.points || [];
+    const profiles = history.profiles || [];
+    const ownership = history.profile_scope === "all"
+      ? props.t.allProfileOwnership(profiles.filter(function (profile) { return Number(profile.total_tokens) > 0; }).length)
+      : history.profile_scope === "current" && profiles[0] && profiles[0].profile
+        ? props.t.currentProfileOwnership(profiles[0].profile)
+        : null;
+    const chartLabel = ownership ? props.t.chart + " · " + ownership : props.t.chart;
     const preferredRovingIndex = Math.max(0, props.selectedBucket === null
       ? points.findIndex(function (point) { return compositionOf(point).additiveTotal > 0; })
       : points.findIndex(function (point) { return Number(point.bucket_start) === props.selectedBucket; }));
@@ -446,7 +457,7 @@
     return h("section", { className: "aum-card aum-chart-card" },
       h("div", { className: "aum-chart-head" },
         h("div", null,
-          h("h2", { className: "aum-card-title" }, t.chart),
+          h("h2", { className: "aum-card-title" }, chartLabel),
           h("p", { className: "aum-card-meta" }, t.chartHint)
         ),
         h("div", { className: "aum-periods", role: "group", "aria-label": t.periodGroup }, [1, 7, 30, 90].map(function (days) {
@@ -504,7 +515,7 @@
           viewBox: "0 0 " + width + " " + height,
           style: { width: width + "px" },
           role: "group",
-          "aria-label": t.chart
+          "aria-label": chartLabel
         },
           h("defs", null, h("pattern", { id: patternId, patternUnits: "userSpaceOnUse", width: 5, height: 5, patternTransform: "rotate(135)" },
             h("rect", { width: 5, height: 5, fill: "#f2eee3" }),

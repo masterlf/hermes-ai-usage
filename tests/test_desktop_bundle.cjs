@@ -24,6 +24,7 @@ const useQuery = options => {
   if (key.includes('session')) return { data: { input: 1, output: 2, total: 3 }, refetch: () => {} };
   if (key.includes('history')) return { data: { history: {
     totals: { total_tokens: 170, api_calls: 3 },
+    profile_scope: 'current',
     profiles: [{ profile: 'security', sessions: 2, api_calls: 3, total_tokens: 170 }],
     partial: true,
     series: { bucket: 'day', bucket_seconds: 86400, points: [{ bucket_start: 1784851200, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }] },
@@ -127,7 +128,7 @@ function resolveTree(node) {
     props: { ...(node.props || {}), children: resolveTree(node.props && node.props.children) }
   };
 }
-const chartHistory = { series: { bucket: 'day', points: [
+const chartHistory = { profile_scope: 'current', profiles: [{ profile: 'security', total_tokens: 170 }], series: { bucket: 'day', points: [
   { bucket_start: 1784851200, sessions: 2, api_calls: 3, input_tokens: 12345, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5 },
   { bucket_start: 1784937600, sessions: 1, api_calls: 1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 99990, cache_write_tokens: 1, reasoning_tokens: 2 },
   { bucket_start: 1785024000, sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0 }
@@ -168,6 +169,7 @@ const page = (contributions || []).find(item => item.id === 'page');
 const tree = resolveTree(page.render());
 const rendered = flatten(tree);
 if (!rendered.includes('Token usage')) throw new Error('Desktop usage chart missing: ' + rendered);
+if (!rendered.includes('Token usage · Profile: security')) throw new Error('Desktop current profile ownership missing from chart heading: ' + rendered);
 if (!rendered.includes('Period composition') || !rendered.includes('Reasoning (within output)')) throw new Error('Desktop composition summary missing: ' + rendered);
 if (!rendered.includes('Selected bucket sessions')) throw new Error('Desktop selected-bucket subtitle missing: ' + rendered);
 if (!rendered.includes('Period total: 170 tok · 3 calls')) throw new Error('Desktop period totals scope missing: ' + rendered);
@@ -207,7 +209,28 @@ if (!bandValues.length || bandValues[0].props.style.color !== 'var(--ui-text-pri
 if (!bandValues[0].props['aria-label'].includes(new Intl.NumberFormat('fr').format(120000))) throw new Error('Desktop history exact value did not use active French locale');
 sandbox.globalThis.__locale = 'fr';
 const frenchRendered = flatten(page.render());
+if (!frenchRendered.includes('Utilisation des tokens · Profil : security')) throw new Error('French Desktop current profile ownership missing from chart heading: ' + frenchRendered);
 if (!frenchRendered.includes('2 min 05 s')) throw new Error('French Desktop duration was not localized: ' + frenchRendered);
 if (!frenchRendered.includes('Composition de la période') || !frenchRendered.includes('Raisonnement (dans la sortie)')) throw new Error('French Desktop composition copy missing: ' + frenchRendered);
+const allProfilesChart = flatten(UsageChart({
+  history: { ...chartHistory, profile_scope: 'all', profiles: [
+    { profile: 'security', total_tokens: 170 },
+    { profile: 'alpha', total_tokens: 50 },
+    { profile: 'idle', total_tokens: 0 }
+  ] },
+  days: 7,
+  selectedBucket: null,
+  onDays: () => {},
+  onSelect: () => {}
+}));
+if (!allProfilesChart.includes('Utilisation des tokens · Tous les profils · 2 profils consommateurs')) throw new Error('Desktop all-profile consuming count is not truthful: ' + allProfilesChart);
+const zeroCurrentChart = flatten(UsageChart({
+  history: { profile_scope: 'current', profiles: [{ profile: 'default', total_tokens: 0 }], series: { bucket: 'day', points: [] } },
+  days: 7,
+  selectedBucket: null,
+  onDays: () => {},
+  onSelect: () => {}
+}));
+if (!zeroCurrentChart.includes('Utilisation des tokens · Profil : default')) throw new Error('Desktop zero usage omitted selected profile: ' + zeroCurrentChart);
 if (rendered.includes('1970')) throw new Error('Desktop Unix seconds were rendered as milliseconds: ' + rendered);
 console.log('desktop bundle smoke: ok');
