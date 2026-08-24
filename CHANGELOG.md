@@ -5,6 +5,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-24
+
 ### Added
 
 - v0.7.0 initially selects All profiles in Desktop and Web while preserving the selected
@@ -123,7 +125,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only provider-quota snapshots and seven-day token history.
 - French and English UI text.
 
-[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.0
 [0.6.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.6.1
 [0.6.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.6.0
 [0.5.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.5.0
