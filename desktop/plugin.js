@@ -725,7 +725,11 @@ function HistoryCard({ history, selectedBucket }) {
                     style: tokenBandStyle(band?.key),
                     title: `${t('nonCacheReadTokens')} ${compactNumber(composition.nonCacheRead)} · ${t('cacheReadTokens')} ${compactNumber(composition.cacheRead)} · ${t('rawTotal')} ${compactNumber(composition.rawTotal)} · ${t('input')} ${compactNumber(composition.input)} · ${t('output')} ${compactNumber(composition.output)} · ${t('cacheWrite')} ${compactNumber(composition.cacheWrite)}`,
                     'aria-label': band ? `${t('nonCacheReadTokens')} ${formatExactNumber(composition.nonCacheRead)}, ${t('cacheReadTokens')} ${formatExactNumber(composition.cacheRead)}, ${t('rawTotal')} ${formatExactNumber(composition.rawTotal)}, ${t('rawVolumeBand')} ${band.label}` : t('usageUnavailable'),
-                    children: [mobileLabel(t('tokenSplit')), band ? jsxs('span', { children: [jsx('b', { children: `${compactNumber(composition.nonCacheRead)} · ${compactNumber(composition.cacheRead)}` }), jsx('small', { className: 'block text-(--ui-text-tertiary)', children: `${t('rawTotal')} ${compactNumber(composition.rawTotal)} · ${t('rawVolumeBand')} ${band.label}` })] }) : '—']
+                    children: [mobileLabel(t('tokenSplit')), band ? jsxs('span', { children: [
+                      jsx('span', { className: 'block whitespace-normal font-semibold leading-5', 'data-token-kind': 'non-cache-read', children: `${t('nonCacheRead')} ${compactNumber(composition.nonCacheRead)}` }),
+                      jsx('span', { className: 'block whitespace-normal font-semibold leading-5', 'data-token-kind': 'cache-read', children: `${t('cacheRead')} ${compactNumber(composition.cacheRead)}` }),
+                      jsx('small', { className: 'block text-(--ui-text-tertiary)', children: `${t('rawTotal')} ${compactNumber(composition.rawTotal)} · ${t('rawVolumeBand')} ${band.label}` })
+                    ] }) : '—']
                   }),
                   jsxs('span', { children: [mobileLabel(t('logsRef')), jsx('code', { className: 'select-all text-(--ui-text-secondary)', children: row.session_ref || '—' })] })
                 ],

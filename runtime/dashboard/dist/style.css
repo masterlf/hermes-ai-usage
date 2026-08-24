@@ -74,6 +74,7 @@
 .aum-model { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .aum-session-ref { font-family: var(--font-mono, ui-monospace, monospace); color: var(--color-foreground); user-select: all; }
 .aum-muted { color: var(--color-muted-foreground); }
+.aum-token-value { display: block; line-height: 1.45; white-space: normal; }
 .aum-duration { display: block; margin-top: .2rem; color: var(--color-muted-foreground); }
 .aum-band-green, .aum-band-blue, .aum-band-yellow, .aum-band-orange, .aum-band-red { color: var(--color-foreground); border-inline-start: 3px solid var(--aum-band-marker); font-weight: 700; }
 .aum-band-green { --aum-band-marker: var(--color-success); }

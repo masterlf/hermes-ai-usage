@@ -293,6 +293,8 @@ function contrastRatio(foreground, background) {
   if (!rendered.includes('Élevée')) throw new Error('visible token band was not rendered: ' + rendered);
   const tokenBandCell = findFirst(render(), node => node.type === 'td' && String(node.props?.className || '').includes('aum-band-'));
   if (!tokenBandCell?.props['aria-label']?.includes(new Intl.NumberFormat('fr').format(120000))) throw new Error('dashboard history exact value did not use active French locale');
+  const visibleFrenchSplit = findAll(tokenBandCell, node => node.type === 'span' && node.props && node.props['data-token-kind']).map(flatten);
+  if (visibleFrenchSplit.join('|') !== 'Hors lecture cache 120|Lecture cache 119.9k') throw new Error('dashboard visible French row labels are not bound to their values: ' + visibleFrenchSplit.join('|'));
   if (!rendered.includes('CLI · Sous-agent') || !rendered.includes('security')) throw new Error('profile-labelled workload was not rendered: ' + rendered);
   if (!rendered.includes('Consommation par profil') || !rendered.includes('Données partielles')) throw new Error('profile breakdown/partial warning missing: ' + rendered);
   const profileTable = findFirst(render(), node => node.type === 'table' && node.props && node.props['aria-label'] === 'Consommation par profil');
@@ -304,11 +306,15 @@ function contrastRatio(foreground, background) {
   if (!rendered.includes('partagé au niveau du compte')) throw new Error('shared account quota wording missing: ' + rendered);
   if (!rendered.includes('2 min 05 s')) throw new Error('session duration was not rendered: ' + rendered);
   sandbox.document.documentElement.lang = 'en';
-  const englishRendered = flatten(render());
+  const englishTree = render();
+  const englishRendered = flatten(englishTree);
   if (!englishRendered.includes('Token usage · Profile: security')) throw new Error('English dashboard current profile ownership missing from chart heading: ' + englishRendered);
   if (!englishRendered.includes('Non-cache-read tokens') || !englishRendered.includes('Cache-read tokens') || !englishRendered.includes('Raw total')) throw new Error('English dashboard split token copy missing: ' + englishRendered);
   if (!englishRendered.includes('2m 05s')) throw new Error('English session duration was not localized: ' + englishRendered);
   if (!englishRendered.includes('Period composition') || !englishRendered.includes('Reasoning (within output)')) throw new Error('English dashboard composition copy missing: ' + englishRendered);
+  const englishTokenBandCell = findFirst(englishTree, node => node.type === 'td' && String(node.props?.className || '').includes('aum-band-'));
+  const visibleEnglishSplit = findAll(englishTokenBandCell, node => node.type === 'span' && node.props && node.props['data-token-kind']).map(flatten);
+  if (visibleEnglishSplit.join('|') !== 'Non-cache read 120|Cache read 119.9k') throw new Error('dashboard visible English row labels are not bound to their values: ' + visibleEnglishSplit.join('|'));
   sandbox.document.documentElement.lang = 'fr';
   if (rendered.includes('1970')) throw new Error('Unix seconds were rendered as milliseconds: ' + rendered);
   const chart = findFirst(render(), node => node.type === 'svg' && node.props && node.props.role === 'group');

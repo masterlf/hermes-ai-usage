@@ -228,12 +228,18 @@ for (const label of ['When', 'Profile', 'Workload', 'Model · provider', 'Calls'
 const bandValues = findAll(tree, node => node.type === 'span' && node.props && node.props['data-token-band']);
 if (!bandValues.length || bandValues[0].props.style.color !== 'var(--ui-text-primary)') throw new Error('Desktop token-band text is not theme-safe');
 if (!bandValues[0].props['aria-label'].includes(new Intl.NumberFormat('fr').format(120000))) throw new Error('Desktop history exact value did not use active French locale');
+const visibleEnglishSplit = findAll(bandValues[0], node => node.type === 'span' && node.props && node.props['data-token-kind']).map(flatten);
+if (visibleEnglishSplit.join('|') !== 'Non-cache read 120|Cache read 119.9k') throw new Error('Desktop visible English row labels are not bound to their values: ' + visibleEnglishSplit.join('|'));
 sandbox.globalThis.__locale = 'fr';
-const frenchRendered = flatten(page.render());
+const frenchTree = resolveTree(page.render());
+const frenchRendered = flatten(frenchTree);
 if (!frenchRendered.includes('Utilisation des tokens · Profil : security')) throw new Error('French Desktop current profile ownership missing from chart heading: ' + frenchRendered);
 if (!frenchRendered.includes('2 min 05 s')) throw new Error('French Desktop duration was not localized: ' + frenchRendered);
 if (!frenchRendered.includes('Composition de la période') || !frenchRendered.includes('Raisonnement (dans la sortie)')) throw new Error('French Desktop composition copy missing: ' + frenchRendered);
 if (!frenchRendered.includes('Tokens hors lecture cache') || !frenchRendered.includes('Tokens lus du cache') || !frenchRendered.includes('Total brut')) throw new Error('French Desktop split token copy missing: ' + frenchRendered);
+const frenchBandValue = findAll(frenchTree, node => node.type === 'span' && node.props && node.props['data-token-band'])[0];
+const visibleFrenchSplit = findAll(frenchBandValue, node => node.type === 'span' && node.props && node.props['data-token-kind']).map(flatten);
+if (visibleFrenchSplit.join('|') !== 'Hors lecture cache 120|Lecture cache 119.9k') throw new Error('Desktop visible French row labels are not bound to their values: ' + visibleFrenchSplit.join('|'));
 if (/\b(?:billable|cost|fresh)\b|uncached[- ]input/i.test(source)) throw new Error('Desktop copy implies spend/provider charging semantics');
 const allProfilesChart = flatten(UsageChart({
   history: { ...chartHistory, profile_scope: 'all', profiles: [

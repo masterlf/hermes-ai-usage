@@ -697,7 +697,8 @@
                 "aria-label": band ? t.nonCacheReadTokens + " " + formatExactNumber(composition.nonCacheRead) + ", " + t.cacheReadTokens + " " + formatExactNumber(composition.cacheRead) + ", " + t.rawTotal + " " + formatExactNumber(composition.rawTotal) + ", " + t.rawVolumeBand + " " + band.label : t.usageUnavailable,
                 "data-label": t.tokenSplit
               }, band ? h("span", null,
-                h("b", null, compact(composition.nonCacheRead) + " · " + compact(composition.cacheRead)),
+                h("span", { className: "aum-token-value", "data-token-kind": "non-cache-read" }, t.nonCacheRead + " " + compact(composition.nonCacheRead)),
+                h("span", { className: "aum-token-value", "data-token-kind": "cache-read" }, t.cached + " " + compact(composition.cacheRead)),
                 h("small", { className: "aum-duration" }, t.rawTotal + " " + compact(composition.rawTotal) + " · " + t.rawVolumeBand + " " + band.label)
               ) : "—"),
               h("td", { "data-label": t.logRef }, row.session_ref ? h("code", { className: "aum-session-ref", title: t.logRef }, row.session_ref) : "—")
