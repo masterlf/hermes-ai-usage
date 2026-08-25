@@ -16,6 +16,8 @@ that separates three facts people often blur together:
 The plugin supports the native Hermes Desktop app and the Hermes Web Dashboard.
 It never reads prompt or message content.
 
+Current plugin version: **v0.7.1**.
+
 ## Features
 
 - account-quota windows, remaining percentage, and reset time for providers supported
@@ -34,6 +36,8 @@ It never reads prompt or message content.
   Current-profile selector and per-profile totals that disclose incomplete or truncated reads;
 - separate non-cache-read, cache-read, and secondary raw totals across summaries, profile
   attribution, period composition, and recent sessions;
+- a compact, keyboard-scrollable per-profile table showing five data rows at a time, and
+  quota bars whose fill and accessible value both represent the displayed remaining amount;
 - French and English UI;
 - no independent credential handling, browser storage, analytics, or third-party scripts.
 

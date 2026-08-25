@@ -15,6 +15,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'ai-usage-monitor'
 const ROUTE = '/ai-usage'
+const VERSION = 'v0.7.1'
 let pluginContext = null
 let chartInstance = 0
 
@@ -120,12 +121,12 @@ function bindingWindow(account) {
 function quotaPercentages(window) {
   const directUsed = Number(window?.used_percent)
   const directRemaining = Number(window?.remaining_percent)
-  const used = Number.isFinite(directUsed) && window?.used_percent !== null
-    ? Math.max(0, Math.min(100, directUsed))
-    : Number.isFinite(directRemaining) && window?.remaining_percent !== null
-      ? 100 - Math.max(0, Math.min(100, directRemaining))
+  const remaining = Number.isFinite(directRemaining) && window?.remaining_percent != null
+    ? Math.max(0, Math.min(100, directRemaining))
+    : Number.isFinite(directUsed) && window?.used_percent != null
+      ? 100 - Math.max(0, Math.min(100, directUsed))
       : null
-  return { used, remaining: used === null ? null : 100 - used }
+  return { used: remaining === null ? null : 100 - remaining, remaining }
 }
 
 function tokenBand(value, t) {
@@ -216,17 +217,16 @@ function Progress({ quotaWindow }) {
     role: 'status',
     children: t('usageUnavailable')
   })
-  const visualWidth = quota.used > 0 && quota.used < 1 ? '2px' : `${quota.used}%`
   return jsx('div', {
     className: 'h-2 w-full overflow-hidden rounded-full bg-(--ui-stroke-secondary)',
     role: 'progressbar',
-    'aria-label': `${quotaWindow.label}: ${quota.used}% ${t('usedWord')}`,
+    'aria-label': `${quotaWindow.label}: ${quota.remaining}% ${t('remainingWord')}`,
     'aria-valuemin': 0,
     'aria-valuemax': 100,
-    'aria-valuenow': quota.used,
+    'aria-valuenow': quota.remaining,
     children: jsx('div', {
-      className: `h-full rounded-full transition-[width] ${quota.used >= 90 ? 'bg-(--ui-danger)' : 'bg-(--ui-accent)'}`,
-      style: { width: visualWidth }
+      className: `h-full rounded-full transition-[width] motion-reduce:transition-none forced-colors:bg-[Highlight] ${quota.remaining <= 10 ? 'bg-(--ui-danger)' : 'bg-(--ui-accent)'}`,
+      style: { width: `${quota.remaining}%` }
     })
   })
 }
@@ -627,33 +627,44 @@ function ProfileBreakdown({ history }) {
   const profiles = history?.profiles || []
   if (!profiles.length) return null
   return jsxs('section', {
-    className: 'overflow-x-auto rounded-md border border-(--ui-stroke-secondary) p-3',
+    className: 'rounded-md border border-(--ui-stroke-secondary) p-3',
     children: [
       jsx('h2', { className: 'font-medium', children: t('profileBreakdown') }),
-      jsxs('table', {
-        className: 'mt-3 w-full min-w-[680px] text-sm',
+      jsx('div', {
+        className: 'mt-3 overflow-auto overscroll-contain rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--ui-accent)',
+        style: {
+          '--aum-profile-header-height': '2.5rem',
+          '--aum-profile-row-height': '2.75rem',
+          maxHeight: 'calc(var(--aum-profile-header-height) + 5 * var(--aum-profile-row-height))'
+        },
+        tabIndex: 0,
         'aria-label': t('profileBreakdown'),
-        children: [
-          jsx('thead', { children: jsxs('tr', { children: [
-            jsx('th', { scope: 'col', className: 'pb-2 text-left font-medium', children: t('profile') }),
-            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('nonCacheRead') }),
-            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('cacheRead') }),
-            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('rawTotal') }),
-            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('calls') }),
-            jsx('th', { scope: 'col', className: 'pb-2 text-right font-medium', children: t('sessions') })
-          ] }) }),
-          jsx('tbody', { children: profiles.map(profile => jsxs('tr', {
-            className: 'border-t border-(--ui-stroke-secondary)',
-            children: [
-              jsx('th', { scope: 'row', className: 'py-2 text-left font-medium', children: profile.profile }),
-              jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(compositionOf(profile).nonCacheRead) }),
-              jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(compositionOf(profile).cacheRead) }),
-              jsx('td', { className: 'py-2 text-right tabular-nums text-(--ui-text-tertiary)', children: compactNumber(compositionOf(profile).rawTotal) }),
-              jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(profile.api_calls) }),
-              jsx('td', { className: 'py-2 text-right tabular-nums', children: compactNumber(profile.sessions) })
-            ]
-          }, profile.profile)) })
-        ]
+        'data-profile-viewport': 'five-rows',
+        children: jsxs('table', {
+          className: 'w-full min-w-[680px] border-separate border-spacing-0 text-sm',
+          'aria-label': t('profileBreakdown'),
+          children: [
+            jsx('thead', { children: jsxs('tr', { className: 'h-10', children: [
+              jsx('th', { scope: 'col', className: 'sticky top-0 z-10 bg-(--ui-bg-primary) text-left font-medium', children: t('profile') }),
+              jsx('th', { scope: 'col', className: 'sticky top-0 z-10 bg-(--ui-bg-primary) text-right font-medium', children: t('nonCacheRead') }),
+              jsx('th', { scope: 'col', className: 'sticky top-0 z-10 bg-(--ui-bg-primary) text-right font-medium', children: t('cacheRead') }),
+              jsx('th', { scope: 'col', className: 'sticky top-0 z-10 bg-(--ui-bg-primary) text-right font-medium', children: t('rawTotal') }),
+              jsx('th', { scope: 'col', className: 'sticky top-0 z-10 bg-(--ui-bg-primary) text-right font-medium', children: t('calls') }),
+              jsx('th', { scope: 'col', className: 'sticky top-0 z-10 bg-(--ui-bg-primary) text-right font-medium', children: t('sessions') })
+            ] }) }),
+            jsx('tbody', { children: profiles.map(profile => jsxs('tr', {
+              className: 'h-11',
+              children: [
+                jsx('th', { scope: 'row', className: 'border-t border-(--ui-stroke-secondary) text-left font-medium', children: profile.profile }),
+                jsx('td', { className: 'border-t border-(--ui-stroke-secondary) text-right tabular-nums', children: compactNumber(compositionOf(profile).nonCacheRead) }),
+                jsx('td', { className: 'border-t border-(--ui-stroke-secondary) text-right tabular-nums', children: compactNumber(compositionOf(profile).cacheRead) }),
+                jsx('td', { className: 'border-t border-(--ui-stroke-secondary) text-right tabular-nums text-(--ui-text-tertiary)', children: compactNumber(compositionOf(profile).rawTotal) }),
+                jsx('td', { className: 'border-t border-(--ui-stroke-secondary) text-right tabular-nums', children: compactNumber(profile.api_calls) }),
+                jsx('td', { className: 'border-t border-(--ui-stroke-secondary) text-right tabular-nums', children: compactNumber(profile.sessions) })
+              ]
+            }, profile.profile)) })
+          ]
+        })
       })
     ]
   })
@@ -761,7 +772,10 @@ function UsagePage() {
         children: [
           jsxs('div', {
             children: [
-              jsx('h1', { className: 'text-lg font-semibold', children: t('title') }),
+              jsxs('div', { className: 'flex items-baseline gap-2', children: [
+                jsx('h1', { className: 'text-lg font-semibold', children: t('title') }),
+                jsx('span', { className: 'text-xs text-(--ui-text-quaternary)', 'aria-label': t('pluginVersion', VERSION), children: VERSION })
+              ] }),
               jsx('p', { className: 'mt-1 text-sm text-(--ui-text-tertiary)', children: t('subtitle') })
             ]
           }),
@@ -806,10 +820,6 @@ function UsagePage() {
           jsx(SessionCard, { usage: sessionQuery.data, sessionId: sessionQuery.sessionId })
         ]
       }),
-      historyQuery.data?.history?.profiles?.length ? jsx('div', {
-        className: 'mt-4',
-        children: jsx(ProfileBreakdown, { history: historyQuery.data.history })
-      }) : null,
       jsx('div', {
         className: 'mt-4',
         children: jsx(UsageChart, {
@@ -823,6 +833,10 @@ function UsagePage() {
           onSelect: value => setSelectedBucket(current => current === value ? null : value)
         })
       }),
+      historyQuery.data?.history?.profiles?.length ? jsx('div', {
+        className: 'mt-4',
+        children: jsx(ProfileBreakdown, { history: historyQuery.data.history })
+      }) : null,
       jsx('div', {
         className: 'mt-4',
         children: jsx(HistoryCard, { history: historyQuery.data?.history, selectedBucket })
@@ -843,6 +857,7 @@ export default {
     ctx.i18n.register({
       en: {
         title: 'AI usage',
+        pluginVersion: version => `Plugin version ${version}`,
         subtitle: 'Provider quota, active-session tokens, and local Hermes history.',
         accountTitle: 'Account quota',
         sharedQuota: 'Provider quota is account-level/shared and is not allocated to profiles.',
@@ -874,6 +889,7 @@ export default {
         usageUnavailable: 'Usage unavailable',
         codexCaveat: 'This is the Codex allowance attached to your ChatGPT subscription, not a universal percentage for ordinary ChatGPT conversations.',
         remaining: value => `${value}% remaining`,
+        remainingWord: 'remaining',
         used: value => `${value}% used`,
         usedWord: 'used',
         resets: value => `Resets ${value}`,
@@ -920,6 +936,7 @@ export default {
       },
       fr: {
         title: 'Consommation IA',
+        pluginVersion: version => `Version du plugin ${version}`,
         subtitle: 'Quota fournisseur, tokens de la session active et historique local Hermes.',
         accountTitle: 'Quota du compte',
         sharedQuota: 'Quota fournisseur partagé au niveau du compte ; il n’est pas attribué aux profils.',
@@ -951,6 +968,7 @@ export default {
         usageUnavailable: 'Consommation indisponible',
         codexCaveat: 'Il s’agit du quota Codex rattaché à ton abonnement ChatGPT, pas d’un pourcentage universel pour les conversations ChatGPT ordinaires.',
         remaining: value => `${value} % restants`,
+        remainingWord: 'restants',
         used: value => `${value} % utilisés`,
         usedWord: 'utilisés',
         resets: value => `Réinitialisation ${value}`,

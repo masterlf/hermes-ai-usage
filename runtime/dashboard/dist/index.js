@@ -7,6 +7,7 @@
 
   const React = SDK.React;
   const h = React.createElement;
+  const VERSION = "v0.7.1";
   let chartInstance = 0;
 
   function api(path) {
@@ -18,6 +19,7 @@
     if (locale.startsWith("fr")) {
       return {
         kicker: "TÉLÉMÉTRIE FOURNISSEUR",
+        versionLabel: "Version du plugin",
         title: "Consommation IA",
         subtitle: "Quota fournisseur, compteurs de tokens Hermes et historique récent — sans lire le contenu de tes prompts.",
         refresh: "Actualiser",
@@ -92,6 +94,7 @@
     }
     return {
       kicker: "PROVIDER TELEMETRY",
+      versionLabel: "Plugin version",
       title: "AI Usage",
       subtitle: "Provider quota, Hermes token counters, and recent history — without reading prompt content.",
       refresh: "Refresh",
@@ -258,12 +261,12 @@
   function quotaPercentages(window) {
     const usedValue = Number(window && window.used_percent);
     const remainingValue = Number(window && window.remaining_percent);
-    const used = window && window.used_percent !== null && Number.isFinite(usedValue)
-      ? Math.max(0, Math.min(100, usedValue))
-      : window && window.remaining_percent !== null && Number.isFinite(remainingValue)
-        ? 100 - Math.max(0, Math.min(100, remainingValue))
+    const remaining = window && window.remaining_percent != null && Number.isFinite(remainingValue)
+      ? Math.max(0, Math.min(100, remainingValue))
+      : window && window.used_percent != null && Number.isFinite(usedValue)
+        ? 100 - Math.max(0, Math.min(100, usedValue))
         : null;
-    return { used: used, remaining: used === null ? null : 100 - used };
+    return { used: remaining === null ? null : 100 - remaining, remaining: remaining };
   }
 
   function tokenBand(value, t) {
@@ -318,7 +321,6 @@
       h("p", { className: "aum-card-meta" }, account.provider + (account.plan ? " · " + account.plan : "")),
       h("div", { className: "aum-window-list" }, (account.windows || []).map(function (window, index) {
         const quota = quotaPercentages(window);
-        const visualWidth = quota.used > 0 && quota.used < 1 ? "2px" : quota.used + "%";
         return h("div", { className: "aum-window", key: window.label + "-" + index },
           h("div", { className: "aum-window-head" },
             h("span", null, window.label),
@@ -327,13 +329,13 @@
           quota.used === null
             ? h("div", { className: "aum-progress is-unavailable", role: "status" }, t.usageUnavailable)
             : h("div", {
-                className: "aum-progress" + (quota.used >= 90 ? " is-danger" : ""),
+                className: "aum-progress" + (quota.remaining <= 10 ? " is-danger" : ""),
                 role: "progressbar",
-                "aria-label": window.label + ": " + quota.used + "% " + t.used,
+                "aria-label": window.label + ": " + quota.remaining + "% " + t.remaining,
                 "aria-valuemin": 0,
                 "aria-valuemax": 100,
-                "aria-valuenow": quota.used
-              }, h("div", { className: "aum-progress-fill", style: { width: visualWidth } })),
+                "aria-valuenow": quota.remaining
+              }, h("div", { className: "aum-progress-fill", style: { width: quota.remaining + "%" } })),
           h("div", { className: "aum-window-foot" },
             quota.used === null ? t.usageUnavailable : quota.used + "% " + t.used + (window.reset_at ? " · " + t.reset + " " + formatDate(window.reset_at) : "")
           )
@@ -374,17 +376,22 @@
     if (!profiles.length) return null;
     return h("section", { className: "aum-card aum-table-card" },
       h("h2", { className: "aum-card-title" }, props.t.profileBreakdown),
-      h("div", { className: "aum-table-wrap" }, h("table", {
-        className: "aum-table",
+      h("div", {
+        className: "aum-table-wrap aum-profile-viewport",
+        tabIndex: 0,
+        "aria-label": props.t.profileBreakdown,
+        "data-profile-viewport": "five-rows"
+      }, h("table", {
+        className: "aum-table aum-profile-table",
         "aria-label": props.t.profileBreakdown
       },
         h("thead", null, h("tr", null,
-          h("th", null, props.t.profile),
-          h("th", { className: "aum-num" }, props.t.nonCacheRead),
-          h("th", { className: "aum-num" }, props.t.cached),
-          h("th", { className: "aum-num" }, props.t.rawTotal),
-          h("th", { className: "aum-num" }, props.t.calls),
-          h("th", { className: "aum-num" }, props.t.sessions)
+          h("th", { scope: "col" }, props.t.profile),
+          h("th", { className: "aum-num", scope: "col" }, props.t.nonCacheRead),
+          h("th", { className: "aum-num", scope: "col" }, props.t.cached),
+          h("th", { className: "aum-num", scope: "col" }, props.t.rawTotal),
+          h("th", { className: "aum-num", scope: "col" }, props.t.calls),
+          h("th", { className: "aum-num", scope: "col" }, props.t.sessions)
         )),
         h("tbody", null, profiles.map(function (profile) {
           const composition = compositionOf(profile);
@@ -765,7 +772,10 @@
     return h("div", { className: "aum-page" },
       h("header", { className: "aum-hero" },
         h("div", null,
-          h("div", { className: "aum-kicker" }, t.kicker),
+          h("div", { className: "aum-kicker" },
+            h("span", null, t.kicker),
+            h("span", { className: "aum-version", "aria-label": t.versionLabel + " " + VERSION }, VERSION)
+          ),
           h("h1", { className: "aum-title" }, t.title),
           h("p", { className: "aum-subtitle" }, t.subtitle)
         ),
@@ -795,7 +805,6 @@
         h(AccountCard, { account: data.account, t: t }),
         h(StatsCard, { history: data.history, t: t, days: days })
       ),
-      h(ProfileBreakdown, { history: data.history, t: t }),
       h(UsageChart, {
         history: data.history,
         t: t,
@@ -809,6 +818,7 @@
           setSelectedBucket(function (current) { return current === value ? null : value; });
         }
       }),
+      h(ProfileBreakdown, { history: data.history, t: t }),
       h(HistoryTable, { history: data.history, t: t, selectedBucket: selectedBucket }),
       h("p", { className: "aum-source-note" }, t.source)
     );

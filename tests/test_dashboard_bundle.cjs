@@ -170,20 +170,47 @@ function contrastRatio(foreground, background) {
   const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
   const manifest = JSON.parse(fs.readFileSync('runtime/dashboard/manifest.json', 'utf8'));
   const readme = fs.readFileSync('README.md', 'utf8');
-  if (manifest.version !== '0.7.0') throw new Error('dashboard manifest version is not 0.7.0');
+  if (manifest.version !== '0.7.1') throw new Error('dashboard manifest version is not 0.7.1');
+  if (!readme.includes('Current plugin version: **v0.7.1**')) throw new Error('README does not identify v0.7.1');
   if (!readme.includes('non_cache_read_tokens = input_tokens + output_tokens + cache_write_tokens')) throw new Error('README does not document the neutral metric formula');
   if (!readme.includes('Desktop and Web Dashboard initially request `scope=all`')) throw new Error('README does not document the client scope default');
   const instrumentedSource = dashboardSource.replace(
     'registry.register("ai-usage-monitor", AIUsagePage);',
-    'window.__compositionOf = compositionOf; window.__UsageChart = UsageChart; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
+    'window.__compositionOf = compositionOf; window.__quotaPercentages = quotaPercentages; window.__AccountCard = AccountCard; window.__ProfileBreakdown = ProfileBreakdown; window.__UsageChart = UsageChart; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
   );
   vm.runInNewContext(instrumentedSource, sandbox);
   const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
   const compositionOf = sandbox.window.__compositionOf;
+  const quotaPercentages = sandbox.window.__quotaPercentages;
+  const AccountCard = sandbox.window.__AccountCard;
+  const ProfileBreakdown = sandbox.window.__ProfileBreakdown;
   const UsageChart = sandbox.window.__UsageChart;
   const textForTest = sandbox.window.__text;
   if (typeof compositionOf !== 'function') throw new Error('dashboard composition helper missing');
   if (typeof UsageChart !== 'function') throw new Error('dashboard UsageChart test export missing');
+  for (const [fixture, expectedUsed, expectedRemaining] of [
+    [{ remaining_percent: 97 }, 3, 97],
+    [{ used_percent: 3 }, 3, 97],
+    [{ remaining_percent: 0 }, 100, 0],
+    [{ remaining_percent: 100 }, 0, 100],
+    [{ remaining_percent: 140 }, 0, 100],
+    [{ remaining_percent: -5 }, 100, 0],
+    [{ remaining_percent: Infinity, used_percent: 3 }, 3, 97]
+  ]) {
+    const quota = quotaPercentages(fixture);
+    if (quota.used !== expectedUsed || quota.remaining !== expectedRemaining) throw new Error('dashboard quota normalization failed: ' + JSON.stringify(fixture));
+  }
+  const unavailableQuota = quotaPercentages({ remaining_percent: null, used_percent: null });
+  if (unavailableQuota.used !== null || unavailableQuota.remaining !== null) throw new Error('dashboard unavailable quota was converted to a number');
+  const directRemainingTree = AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: 97, used_percent: 80, reset_at: '2026-07-29T01:07:13Z' }] }, t: textForTest() });
+  const remainingProgress = findFirst(directRemainingTree, node => node.props && node.props.role === 'progressbar');
+  const remainingFill = findFirst(remainingProgress, node => node.props && node.props.className === 'aum-progress-fill');
+  if (!remainingProgress || remainingProgress.props['aria-valuenow'] !== 97 || !remainingProgress.props['aria-label'].includes(textForTest().remaining)) throw new Error('dashboard progress does not expose remaining quota');
+  if (!remainingFill || remainingFill.props.style.width !== '97%') throw new Error('dashboard 97% remaining does not fill 97%');
+  if (String(remainingProgress.props.className).includes('is-danger')) throw new Error('dashboard healthy remaining quota is marked dangerous');
+  if (!flatten(directRemainingTree).includes('3% utilisés') || !flatten(directRemainingTree).includes('Réinitialisation')) throw new Error('dashboard quota footer did not retain used/reset details');
+  const lowProgress = findFirst(AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: 10 }] }, t: textForTest() }), node => node.props && node.props.role === 'progressbar');
+  if (!String(lowProgress.props.className).includes('is-danger')) throw new Error('dashboard low remaining quota is not marked dangerous');
   const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
   if (normal.nonCacheRead !== 40 || normal.rawTotal !== 100 || normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('dashboard composition math is incorrect');
   if (normal.shareTenths.join(',') !== '100,200,600,100') throw new Error('dashboard top-level ratios are incorrect: ' + normal.shareTenths);
@@ -221,6 +248,11 @@ function contrastRatio(foreground, background) {
     throw new Error('dashboard narrow period targets are not durably 44x44');
   }
   if (!dashboardSource.includes('role: "progressbar"')) throw new Error('dashboard quota progress semantics missing');
+  const profileViewportRule = dashboardStyles.match(/\.aum-profile-viewport\s*\{([^}]*)\}/);
+  if (!profileViewportRule || !profileViewportRule[1].includes('--aum-profile-row-height: 2.75rem') || !profileViewportRule[1].includes('--aum-profile-header-height: 2.5rem')) throw new Error('dashboard profile viewport sizing variables missing');
+  if (!profileViewportRule[1].includes('max-height: calc(var(--aum-profile-header-height) + 5 * var(--aum-profile-row-height))') || !profileViewportRule[1].includes('overflow: auto')) throw new Error('dashboard profile viewport is not exactly five rows with automatic scrolling');
+  if (!/\.aum-profile-table thead th\s*\{[^}]*position:\s*sticky/.test(dashboardStyles)) throw new Error('dashboard profile header is not sticky');
+  if (!dashboardStyles.includes('.aum-table.aum-profile-table { min-width: 680px')) throw new Error('dashboard profile table lacks six-column horizontal overflow floor');
   if (dashboardStyles.includes('prefers-color-scheme')) throw new Error('token bands must follow the dashboard theme, not the OS theme');
   const sharedBandRule = dashboardStyles.match(/\.aum-band-green,[^{]+\{([^}]*)\}/);
   if (!sharedBandRule || !sharedBandRule[1].includes('color: var(--color-foreground)')) {
@@ -245,6 +277,9 @@ function contrastRatio(foreground, background) {
   const initialHistoryCall = calls.find(path => path.includes('/history?'));
   if (!initialHistoryCall || !initialHistoryCall.includes('scope=all')) throw new Error('dashboard initial request is not all-profile: ' + calls.join(', '));
   const rendered = flatten(render());
+  if (!rendered.includes('v0.7.1')) throw new Error('dashboard visible plugin version missing');
+  const renderedOrder = ['Utilisation des tokens', 'Consommation par profil', 'Sessions récentes'].map(label => rendered.indexOf(label));
+  if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('dashboard chart/profile/recent order is incorrect: ' + renderedOrder);
   if (!rendered.includes('35% restants')) throw new Error('provider quota fallback was not rendered');
   if (!rendered.includes('65% utilisés')) throw new Error('provider used fallback was not rendered');
   if (!rendered.includes('gpt-test')) throw new Error('history row was not rendered: ' + rendered);
@@ -303,6 +338,17 @@ function contrastRatio(foreground, background) {
   for (const label of ['Profil', 'Hors lecture cache', 'Lecture cache', 'Total brut', 'Appels API', 'Sessions']) {
     if (!profileLabels.includes(label)) throw new Error('profile mobile field label missing: ' + label);
   }
+  const sixProfiles = Array.from({ length: 6 }, (_, index) => ({ profile: 'profile-' + index, sessions: index, api_calls: index, input_tokens: index + 1 }));
+  const profileFixture = ProfileBreakdown({ history: { profiles: sixProfiles }, t: textForTest() });
+  const profileViewport = findFirst(profileFixture, node => node.props && node.props['data-profile-viewport'] === 'five-rows');
+  const fixtureTable = findFirst(profileFixture, node => node.type === 'table');
+  if (!profileViewport || profileViewport.props.tabIndex !== 0 || !profileViewport.props['aria-label']) throw new Error('dashboard profile viewport is not keyboard discoverable');
+  if (!String(profileViewport.props.className).includes('aum-profile-viewport')) throw new Error('dashboard durable profile viewport class missing');
+  const fixtureBody = findFirst(fixtureTable, node => node.type === 'tbody');
+  if (findAll(fixtureBody, node => node.type === 'tr').length !== 6) throw new Error('dashboard profile viewport discarded rows');
+  if (!String(fixtureTable.props.className).includes('aum-profile-table')) throw new Error('dashboard profile table selector missing');
+  const profileHeader = findFirst(fixtureTable, node => node.type === 'thead');
+  if (!profileHeader || findAll(profileHeader, node => node.type === 'th' && node.props.scope === 'col').length !== 6) throw new Error('dashboard native profile column headers missing');
   if (!rendered.includes('partagé au niveau du compte')) throw new Error('shared account quota wording missing: ' + rendered);
   if (!rendered.includes('2 min 05 s')) throw new Error('session duration was not rendered: ' + rendered);
   sandbox.document.documentElement.lang = 'en';

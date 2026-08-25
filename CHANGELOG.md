@@ -5,6 +5,19 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-25
+
+### Fixed
+
+- Desktop and Web now place the compact per-profile table directly between the token chart
+  and recent history, retaining every profile in a keyboard-scrollable five-row viewport.
+- Quota bars now fill and expose the remaining percentage, matching their adjacent headline,
+  while retaining the used percentage and reset time in the footer.
+
+### Changed
+
+- Both surfaces visibly identify plugin version v0.7.1 in their headers.
+
 ## [0.7.0] - 2026-08-24
 
 ### Added
@@ -125,7 +138,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only provider-quota snapshots and seven-day token history.
 - French and English UI text.
 
-[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.1
 [0.7.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.0
 [0.6.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.6.1
 [0.6.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.6.0
