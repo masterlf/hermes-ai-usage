@@ -10,6 +10,7 @@ const states = [];
 const calls = [];
 let holdNextUnfiltered = false;
 let resolveStaleHistory;
+let historyOverride;
 const snapshot = {
   account: {
     available: true,
@@ -21,21 +22,27 @@ const snapshot = {
 };
 const history = {
   history: {
+    available: true,
     days: 7,
     profile_scope: 'current',
-    totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 },
-    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 }],
+    provider_quota_scope: 'account_shared_not_attributed',
+    totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 },
+    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }],
     partial: true,
     series: {
       bucket: 'day',
       bucket_seconds: 86400,
+      timezone: 'UTC',
       points: [
         { bucket_start: 1784851200, sessions: 2, api_calls: 3, input_tokens: 12345, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 12415 },
         { bucket_start: 1784937600, sessions: 1, api_calls: 1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 99990, cache_write_tokens: 1, reasoning_tokens: 2, total_tokens: 100006 },
         { bucket_start: 1785024000, sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 }
       ]
     },
-    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 119880, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }]
+    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 119880, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }],
+    row_count: 1,
+    rows_truncated: false,
+    selected_bucket_start: null
   }
 };
 const React = {
@@ -66,6 +73,7 @@ const sandbox = {
       fetchJSON: path => {
         calls.push(path);
         if (path.includes('/snapshot')) return Promise.resolve(snapshot);
+        if (historyOverride !== undefined) return Promise.resolve({ history: historyOverride });
         if (path.includes('bucket_start=')) {
           return Promise.resolve({ history: {
             ...history.history,
@@ -87,9 +95,9 @@ const sandbox = {
             ...history.history,
             profile_scope: 'all',
             profiles: [
-              { profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 },
-              { profile: 'alpha', sessions: 1, api_calls: 1, input_tokens: 20, output_tokens: 10, cache_read_tokens: 20, cache_write_tokens: 0, total_tokens: 50 },
-              { profile: 'idle', sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: 0 }
+              { profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 },
+              { profile: 'alpha', sessions: 1, api_calls: 1, input_tokens: 20, output_tokens: 10, cache_read_tokens: 20, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 50 },
+              { profile: 'idle', sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 }
             ]
           } });
         }
@@ -189,9 +197,44 @@ function contrastRatio(foreground, background) {
   const textForTest = sandbox.window.__text;
   if (typeof compositionOf !== 'function') throw new Error('dashboard composition helper missing');
   if (typeof UsageChart !== 'function') throw new Error('dashboard UsageChart test export missing');
+  const zeroHistory = {
+    available: true,
+    days: 7,
+    profile_scope: 'all',
+    provider_quota_scope: 'account_shared_not_attributed',
+    totals: { sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 },
+    series: { bucket: 'day', bucket_seconds: 86400, timezone: 'UTC', points: [] },
+    rows: [],
+    profiles: [],
+    row_count: 0,
+    rows_truncated: false,
+    selected_bucket_start: null,
+    partial: false
+  };
+  const malformedHistories = [
+    {},
+    [],
+    'history',
+    { ...zeroHistory, available: 1 },
+    { ...zeroHistory, totals: {} },
+    { ...zeroHistory, totals: { ...zeroHistory.totals, input_tokens: Infinity } },
+    { ...zeroHistory, series: [] },
+    { ...zeroHistory, series: { ...zeroHistory.series, points: {} } },
+    { ...zeroHistory, series: { ...zeroHistory.series, points: [{}] } },
+    { ...zeroHistory, rows: {} },
+    { ...zeroHistory, profiles: {} },
+    { ...zeroHistory, profiles: [{}] }
+  ];
+  for (const fixture of malformedHistories) {
+    const normalized = normalizeHistoryResponse({ history: fixture });
+    if (normalized?.available !== false || Object.keys(normalized).length !== 1) {
+      throw new Error('dashboard accepted malformed history fixture: ' + String(fixture));
+    }
+  }
   if (normalizeHistoryResponse({})?.available !== false || normalizeHistoryResponse({ history: null })?.available !== false) {
     throw new Error('dashboard malformed successful history response was converted to zero usage');
   }
+  if (normalizeHistoryResponse({ history: zeroHistory }) !== zeroHistory) throw new Error('dashboard valid zero history was rejected');
   if (normalizeHistoryResponse(history) !== history.history) throw new Error('dashboard valid history response was rejected');
   for (const [fixture, expectedUsed, expectedRemaining] of [
     [{ remaining_percent: 97 }, 3, 97],
@@ -308,6 +351,17 @@ function contrastRatio(foreground, background) {
   if (!rendered.includes('65% utilisés')) throw new Error('provider used fallback was not rendered');
   if (!rendered.includes('gpt-test')) throw new Error('history row was not rendered: ' + rendered);
   if (!rendered.includes('Utilisation des tokens')) throw new Error('usage chart was not rendered: ' + rendered);
+  historyOverride = {};
+  effect();
+  await new Promise(resolve => setImmediate(resolve));
+  const malformedRendered = flatten(render());
+  if (!malformedRendered.includes('Historique indisponible')) throw new Error('dashboard malformed history did not render generic unavailable state');
+  for (const suppressed of ['Activité Hermes', 'Utilisation des tokens', 'Consommation par profil', 'Sessions récentes']) {
+    if (malformedRendered.includes(suppressed)) throw new Error('dashboard malformed history rendered protected section: ' + suppressed);
+  }
+  historyOverride = undefined;
+  effect();
+  await new Promise(resolve => setImmediate(resolve));
   if (!rendered.includes('Utilisation des tokens · Tous les profils · 2 profils consommateurs')) throw new Error('French dashboard initial all-profile ownership missing from chart heading: ' + rendered);
   if (!rendered.includes('Tokens hors lecture cache') || !rendered.includes('Tokens lus du cache') || !rendered.includes('Total brut')) throw new Error('French dashboard split token summary missing: ' + rendered);
   const initialScopeSelector = findFirst(render(), node => node.type === 'select' && node.props && node.props['aria-label']);

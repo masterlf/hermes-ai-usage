@@ -743,11 +743,67 @@
     return h("div", { className: "aum-error", role: "alert" }, props.t.historyUnavailable);
   }
 
+  const HISTORY_COUNTERS = ["sessions", "api_calls", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens", "total_tokens"];
+
+  function historyObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function historyCount(value) {
+    return Number.isSafeInteger(value) && value >= 0;
+  }
+
+  function historyCounters(value) {
+    return historyObject(value) && HISTORY_COUNTERS.every(function (field) { return historyCount(value[field]); });
+  }
+
+  function historyPoint(point) {
+    return historyCounters(point) && historyCount(point.bucket_start);
+  }
+
+  function historyProfile(profile) {
+    return historyCounters(profile)
+      && typeof profile.profile === "string"
+      && profile.profile.length > 0
+      && profile.profile.length <= 64;
+  }
+
+  function historyRow(row) {
+    return historyObject(row)
+      && historyCount(row.started_at)
+      && (row.ended_at === null || historyCount(row.ended_at))
+      && historyCount(row.duration_seconds)
+      && typeof row.is_active === "boolean"
+      && historyCount(row.api_call_count)
+      && ["input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens", "total_tokens"].every(function (field) { return historyCount(row[field]); })
+      && ["model", "provider", "surface", "source", "workload_type"].every(function (field) { return typeof row[field] === "string"; })
+      && (row.profile === null || typeof row.profile === "string")
+      && (row.session_ref === null || typeof row.session_ref === "string");
+  }
+
+  function validHistory(history) {
+    if (!historyObject(history) || history.available !== true) return false;
+    if (!historyCount(history.days) || history.days < 1 || history.days > 90) return false;
+    if (!["current", "all"].includes(history.profile_scope)) return false;
+    if (history.provider_quota_scope !== "account_shared_not_attributed") return false;
+    if (!historyCounters(history.totals)) return false;
+    if (!historyObject(history.series)
+        || ![["hour", 3600], ["day", 86400]].some(function (shape) { return history.series.bucket === shape[0] && history.series.bucket_seconds === shape[1]; })
+        || history.series.timezone !== "UTC"
+        || !Array.isArray(history.series.points)
+        || history.series.points.length > 2200
+        || !history.series.points.every(historyPoint)) return false;
+    if (!Array.isArray(history.rows) || history.rows.length > 200 || !history.rows.every(historyRow)) return false;
+    if (!Array.isArray(history.profiles) || history.profiles.length > 64 || !history.profiles.every(historyProfile)) return false;
+    if (!historyCount(history.row_count) || typeof history.rows_truncated !== "boolean") return false;
+    if (history.selected_bucket_start !== null && !historyCount(history.selected_bucket_start)) return false;
+    if (history.partial !== undefined && typeof history.partial !== "boolean") return false;
+    return true;
+  }
+
   function normalizeHistoryResponse(response) {
     const history = response && response.history;
-    return history && typeof history === "object" && !Array.isArray(history)
-      ? history
-      : { available: false };
+    return validHistory(history) ? history : { available: false };
   }
 
   function AIUsagePage() {
