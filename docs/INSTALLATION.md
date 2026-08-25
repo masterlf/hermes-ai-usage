@@ -8,8 +8,18 @@ commit `1bbb6e5b`, and local Hermes commit
 claimed minimum supported version.
 
 This repository is not packaged for native `hermes plugins install`. Installation is a
-reviewable file copy into one Hermes profile home. Set `HERMES_HOME` explicitly for a
-named profile; otherwise the default is `$HOME/.hermes`.
+reviewable file copy into one Hermes profile home. Discover the exact home instead of
+inferring it from a display name or alias:
+
+```bash
+hermes profile list
+hermes profile show PROFILE_NAME
+export HERMES_HOME="/exact/Path/from-profile-show"
+test -f "$HERMES_HOME/config.yaml"
+```
+
+For the default profile, `HERMES_HOME` defaults to `$HOME/.hermes`; set it explicitly to the
+reported `Path` when installing into a named profile.
 
 ## Verified install from an exact release
 

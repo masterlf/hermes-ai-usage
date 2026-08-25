@@ -23,8 +23,9 @@
 1. Do not handle or expose provider credentials.
 2. Do not read or expose prompt/message/tool content.
 3. Do not mutate Hermes state or provider account state.
-4. Cross profile boundaries only after explicit All-profiles selection and only through
-   canonical, bounded, read-only database discovery.
+4. Treat first-party Dashboard users as trusted machine operators: clients initially request
+   All profiles, while the API defaults to current-profile scope. Every cross-profile read
+   uses canonical, bounded, read-only database discovery.
 5. Do not present local estimates as official remote quota.
 6. Do not introduce browser code-execution or data-exfiltration sinks.
 7. Keep build and automation permissions minimal and reproducible.

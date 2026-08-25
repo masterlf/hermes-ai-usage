@@ -9,8 +9,10 @@ From Hermes provider adapters:
 - quota window label, utilization, remaining percentage, reset time, and bounded detail;
 - fetch timestamp and bounded account-usage details.
 
-From the active Hermes profile's `sessions` table by default, or from the canonical default
-and validated named profile databases after the user explicitly selects All profiles:
+From the active Hermes profile's `sessions` table for the API's default current scope, or from
+the canonical default and validated named profile databases for `scope=all`. The first-party
+Desktop and Web clients initially request All profiles because Dashboard principals are
+trusted machine operators:
 
 - raw source transiently, only to map it to an exact allowlisted `surface` enum;
 - lineage marker presence as booleans, only to derive a bounded `workload_type` enum;

@@ -829,6 +829,40 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(len(set(refs)), 2)
         self.assertTrue(all(len(reference) >= 16 for reference in refs))
 
+    def test_all_profile_session_ref_checks_other_profiles_outside_requested_period(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            alpha = root / "profiles" / "alpha"
+            alpha.mkdir(parents=True)
+            self._create_state_db(root)
+            self._create_state_db(alpha)
+            for home, session_id, ended_at in (
+                (root, "current_AAAAsame12345678", 10 * 86400 - 10),
+                (alpha, "historic_BBBsame12345678", 1000),
+            ):
+                database = sqlite3.connect(home / "state.db")
+                database.execute(
+                    """INSERT INTO sessions VALUES (
+                        ?, 'cli', 'gpt-test', 'openai-codex', ?, ?,
+                        1, 0, 0, 0, 0, 1, NULL, 0.0, 'estimated'
+                    )""",
+                    (session_id, ended_at - 10, ended_at),
+                )
+                database.commit()
+                database.close()
+
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module.time, "time", return_value=10 * 86400),
+            ):
+                payload = module._all_profiles_history(7, 30)
+
+        self.assertTrue(payload["available"])
+        self.assertEqual(len(payload["rows"]), 1)
+        self.assertEqual(payload["rows"][0]["profile"], "default")
+        self.assertGreaterEqual(len(payload["rows"][0]["session_ref"]), 16)
+        self.assertNotEqual(payload["rows"][0]["session_ref"], "same12345678")
+
     def test_connection_rejects_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -1128,7 +1162,7 @@ class HistoryTests(unittest.TestCase):
                 mock.patch.object(module, "_SQL_PROGRESS_STEPS", 1_000),
                 mock.patch.object(module.time, "time", return_value=1100),
             ):
-                identities, failure = module._session_identities(root / "state.db", 7)
+                identities, failure = module._session_identities(root / "state.db")
 
         self.assertIsNone(identities)
         self.assertEqual(failure, "database_unavailable")

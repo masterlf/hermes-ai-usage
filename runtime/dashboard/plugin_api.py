@@ -404,10 +404,8 @@ def _discover_profile_databases() -> tuple[list[tuple[str, Path]], list[dict[str
     return candidates, failures, truncated
 
 
-def _session_identities(db_path: Path, days: int) -> tuple[set[str] | None, str | None]:
-    """Read bounded full IDs transiently so copied histories fail closed."""
-    now = time.time()
-    cutoff = now - (days * 86400)
+def _session_identities(db_path: Path) -> tuple[set[str] | None, str | None]:
+    """Read all retained IDs within a hard ceiling so copied histories fail closed."""
     connection: sqlite3.Connection | None = None
     try:
         connection = _readonly_connection(db_path)
@@ -417,17 +415,9 @@ def _session_identities(db_path: Path, days: int) -> tuple[set[str] | None, str 
         rows = connection.execute(
             """SELECT id
                FROM sessions
-               WHERE COALESCE(ended_at, started_at) >= ?
-                 AND COALESCE(ended_at, started_at) <= ?
-                 AND (
-                     MAX(COALESCE(input_tokens, 0), 0)
-                     + MAX(COALESCE(output_tokens, 0), 0)
-                     + MAX(COALESCE(cache_read_tokens, 0), 0)
-                     + MAX(COALESCE(cache_write_tokens, 0), 0)
-                 ) > 0
                ORDER BY id
                LIMIT ?""",
-            (cutoff, now, _MAX_SESSION_IDENTITIES + 1),
+            (_MAX_SESSION_IDENTITIES + 1,),
         ).fetchall()
         if len(rows) > _MAX_SESSION_IDENTITIES:
             return None, "session_identity_scan_truncated"
@@ -763,11 +753,12 @@ def _token_history(
             ).fetchall()
         ]
         returned_session_ids = [str(row.get("id") or "") for row in raw_rows]
-        global_collisions = (
-            global_collisions_override
-            if global_collisions_override is not None
-            else _global_session_ref_collisions(connection, returned_session_ids)
-        )
+        local_collisions = _global_session_ref_collisions(connection, returned_session_ids)
+        global_collisions = {
+            width: local_collisions.get(width, set())
+            | (global_collisions_override or {}).get(width, set())
+            for width in _SESSION_REF_WIDTHS
+        }
     except (sqlite3.Error, OSError) as exc:
         logger.warning("Token history query failed (%s)", type(exc).__name__)
         return {
@@ -932,7 +923,7 @@ def _all_profiles_history(days: int, limit: int, bucket_start: int | None = None
     identity_sets: dict[str, set[str]] = {}
     verified_candidates: list[tuple[str, Path]] = []
     for profile, db_path in candidates:
-        identities, failure_code = _session_identities(db_path, days)
+        identities, failure_code = _session_identities(db_path)
         if failure_code:
             failures.append({"profile": profile, "code": failure_code})
         else:
