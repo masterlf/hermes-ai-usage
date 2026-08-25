@@ -16,12 +16,19 @@
 .aum-card-title { margin: 0; font-size: .82rem; font-family: var(--font-mono, ui-monospace, monospace); letter-spacing: .11em; text-transform: uppercase; }
 .aum-card-meta { margin: .4rem 0 0; color: var(--color-muted-foreground); font-size: .76rem; }
 .aum-warning { margin: .4rem 0 0; color: var(--color-primary); font-size: .72rem; }
-.aum-window-list { display: grid; gap: 1rem; margin-top: 1rem; }
+.aum-quota-legend { display: flex; flex-wrap: wrap; gap: .3rem .8rem; margin-top: .8rem; color: var(--color-muted-foreground); font-size: .68rem; }
+.aum-quota-legend span { display: inline-flex; align-items: center; gap: .3rem; }
+.aum-quota-swatch { width: .55rem; height: .55rem; border-radius: 999px; }
+.aum-quota-swatch.is-red { background: #ff5c5c; }
+.aum-quota-swatch.is-orange { background: #ff9f43; }
+.aum-quota-swatch.is-yellow { background: #f6d860; }
+.aum-quota-swatch.is-green { background: #4ade80; }
+.aum-window-list { display: grid; gap: 1rem; margin-top: .8rem; }
 .aum-window-head { display: flex; justify-content: space-between; gap: .75rem; align-items: baseline; font-size: .86rem; }
 .aum-window-value { font-family: var(--font-mono, ui-monospace, monospace); font-weight: 700; }
-.aum-progress { height: .58rem; margin-top: .45rem; overflow: hidden; border: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-muted) 60%, transparent); }
-.aum-progress-fill { height: 100%; background: linear-gradient(90deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 50%, var(--color-foreground))); transition: width .3s ease; }
-.aum-progress.is-danger .aum-progress-fill { background: var(--color-destructive); }
+.aum-progress { position: relative; height: .58rem; margin-top: .45rem; overflow: hidden; border: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-muted) 60%, transparent); }
+.aum-progress-scale { position: absolute; inset: 0; background: linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%); }
+.aum-progress-mask { position: absolute; inset-block: 0; background: color-mix(in srgb, var(--color-muted) 60%, transparent); transition: left .3s ease, width .3s ease; }
 .aum-progress.is-unavailable { height: auto; min-height: .58rem; border-style: dashed; padding: .15rem .35rem; color: var(--color-muted-foreground); font-size: .68rem; }
 .aum-window-foot { margin-top: .4rem; color: var(--color-muted-foreground); font-size: .72rem; }
 .aum-details { margin-top: .9rem; color: var(--color-muted-foreground); font-size: .74rem; line-height: 1.45; }
@@ -95,12 +102,14 @@
 .aum-loading { min-height: 14rem; display: grid; place-items: center; border: 1px dashed var(--color-border); color: var(--color-muted-foreground); font-family: var(--font-mono, ui-monospace, monospace); }
 .aum-source-note { margin: 0; color: var(--color-muted-foreground); font-size: .72rem; line-height: 1.45; }
 @media (max-width: 980px) { .aum-grid { grid-template-columns: 1fr; } }
-@media (prefers-reduced-motion: reduce) { .aum-progress-fill, .aum-chart-bar, .aum-chart-segment, .aum-chart-tooltip { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .aum-progress-mask, .aum-chart-bar, .aum-chart-segment, .aum-chart-tooltip { transition: none; } }
 @media (forced-colors: active) {
   .aum-chart-bar:focus .aum-chart-outline { stroke: Highlight; }
   .aum-chart-bar.is-selected .aum-chart-outline { stroke: CanvasText; }
   .aum-period { forced-color-adjust: auto; }
-  .aum-progress-fill { background: Highlight; }
+  .aum-progress-scale { background: Highlight; }
+  .aum-progress-mask { background: Canvas; }
+  .aum-quota-swatch { forced-color-adjust: auto; border: 1px solid CanvasText; }
   .aum-profile-viewport:focus-visible { outline-color: Highlight; }
   .aum-profile-table thead th { border-bottom: 1px solid CanvasText; }
 }

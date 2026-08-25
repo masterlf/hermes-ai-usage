@@ -170,8 +170,8 @@ function contrastRatio(foreground, background) {
   const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
   const manifest = JSON.parse(fs.readFileSync('runtime/dashboard/manifest.json', 'utf8'));
   const readme = fs.readFileSync('README.md', 'utf8');
-  if (manifest.version !== '0.7.1') throw new Error('dashboard manifest version is not 0.7.1');
-  if (!readme.includes('Current plugin version: **v0.7.1**')) throw new Error('README does not identify v0.7.1');
+  if (manifest.version !== '0.7.2') throw new Error('dashboard manifest version is not 0.7.2');
+  if (!readme.includes('Current plugin version: **v0.7.2**')) throw new Error('README does not identify v0.7.2');
   if (!readme.includes('non_cache_read_tokens = input_tokens + output_tokens + cache_write_tokens')) throw new Error('README does not document the neutral metric formula');
   if (!readme.includes('Desktop and Web Dashboard initially request `scope=all`')) throw new Error('README does not document the client scope default');
   const instrumentedSource = dashboardSource.replace(
@@ -202,15 +202,20 @@ function contrastRatio(foreground, background) {
   }
   const unavailableQuota = quotaPercentages({ remaining_percent: null, used_percent: null });
   if (unavailableQuota.used !== null || unavailableQuota.remaining !== null) throw new Error('dashboard unavailable quota was converted to a number');
+  for (const remaining of [0, 20, 40, 60, 80, 97, 100]) {
+    const quotaTree = AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: remaining }] }, t: textForTest() });
+    const progress = findFirst(quotaTree, node => node.props && node.props.role === 'progressbar');
+    const gradient = findFirst(progress, node => node.props && node.props.className === 'aum-progress-scale');
+    const mask = findFirst(progress, node => node.props && node.props.className === 'aum-progress-mask');
+    if (!progress || progress.props['aria-valuenow'] !== remaining || !progress.props['aria-label'].includes(textForTest().remaining)) throw new Error('dashboard progress does not expose remaining quota: ' + remaining);
+    if (!gradient) throw new Error('dashboard full-track quota gradient missing');
+    if (!mask || mask.props.style.left !== remaining + '%' || mask.props.style.width !== (100 - remaining) + '%') throw new Error('dashboard quota mask geometry is incorrect: ' + remaining);
+  }
   const directRemainingTree = AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: 97, used_percent: 80, reset_at: '2026-07-29T01:07:13Z' }] }, t: textForTest() });
-  const remainingProgress = findFirst(directRemainingTree, node => node.props && node.props.role === 'progressbar');
-  const remainingFill = findFirst(remainingProgress, node => node.props && node.props.className === 'aum-progress-fill');
-  if (!remainingProgress || remainingProgress.props['aria-valuenow'] !== 97 || !remainingProgress.props['aria-label'].includes(textForTest().remaining)) throw new Error('dashboard progress does not expose remaining quota');
-  if (!remainingFill || remainingFill.props.style.width !== '97%') throw new Error('dashboard 97% remaining does not fill 97%');
-  if (String(remainingProgress.props.className).includes('is-danger')) throw new Error('dashboard healthy remaining quota is marked dangerous');
   if (!flatten(directRemainingTree).includes('3% utilisés') || !flatten(directRemainingTree).includes('Réinitialisation')) throw new Error('dashboard quota footer did not retain used/reset details');
-  const lowProgress = findFirst(AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: 10 }] }, t: textForTest() }), node => node.props && node.props.role === 'progressbar');
-  if (!String(lowProgress.props.className).includes('is-danger')) throw new Error('dashboard low remaining quota is not marked dangerous');
+  for (const label of ['Critique 0–25 %', 'Faible 25–50 %', 'Modéré 50–75 %', 'Sain 75–100 %']) {
+    if (!flatten(directRemainingTree).includes(label)) throw new Error('dashboard visible quota scale label missing: ' + label);
+  }
   const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
   if (normal.nonCacheRead !== 40 || normal.rawTotal !== 100 || normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('dashboard composition math is incorrect');
   if (normal.shareTenths.join(',') !== '100,200,600,100') throw new Error('dashboard top-level ratios are incorrect: ' + normal.shareTenths);
@@ -244,6 +249,15 @@ function contrastRatio(foreground, background) {
   }
   if (!dashboardStyles.includes('repeating-linear-gradient') || !dashboardStyles.includes('grid-template-columns: repeat(2')) throw new Error('dashboard reasoning pattern/mobile composition layout missing');
   if (!/@media\s*\(forced-colors:\s*active\)/.test(dashboardStyles)) throw new Error('dashboard forced-colors support missing');
+  const quotaScaleRule = dashboardStyles.match(/\.aum-progress-scale\s*\{([^}]*)\}/);
+  const quotaMaskRule = dashboardStyles.match(/\.aum-progress-mask\s*\{([^}]*)\}/);
+  const fixedQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%)';
+  if (!quotaScaleRule || !quotaScaleRule[1].includes(fixedQuotaGradient)) throw new Error('dashboard fixed quota gradient stops are missing or reordered');
+  if (quotaScaleRule[1].includes('var(--color-primary)')) throw new Error('dashboard quota gradient regressed to host primary');
+  if (!quotaMaskRule || !quotaMaskRule[1].includes('background: color-mix(in srgb, var(--color-muted) 60%, transparent)')) throw new Error('dashboard consumed mask does not restore the track color');
+  for (const color of ['#ff5c5c', '#ff9f43', '#f6d860', '#4ade80']) {
+    if (contrastRatio(color, '#041c1c') < 3) throw new Error('dashboard quota stop contrast is below 3:1: ' + color);
+  }
   if (!/\.aum-period\s*\{[^}]*min-height:\s*44px;[^}]*min-width:\s*44px;/.test(dashboardStyles.slice(dashboardStyles.indexOf('@media (max-width: 720px)')))) {
     throw new Error('dashboard narrow period targets are not durably 44x44');
   }
@@ -277,7 +291,7 @@ function contrastRatio(foreground, background) {
   const initialHistoryCall = calls.find(path => path.includes('/history?'));
   if (!initialHistoryCall || !initialHistoryCall.includes('scope=all')) throw new Error('dashboard initial request is not all-profile: ' + calls.join(', '));
   const rendered = flatten(render());
-  if (!rendered.includes('v0.7.1')) throw new Error('dashboard visible plugin version missing');
+  if (!rendered.includes('v0.7.2')) throw new Error('dashboard visible plugin version missing');
   const renderedOrder = ['Utilisation des tokens', 'Consommation par profil', 'Sessions récentes'].map(label => rendered.indexOf(label));
   if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('dashboard chart/profile/recent order is incorrect: ' + renderedOrder);
   if (!rendered.includes('35% restants')) throw new Error('provider quota fallback was not rendered');

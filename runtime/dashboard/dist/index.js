@@ -7,7 +7,7 @@
 
   const React = SDK.React;
   const h = React.createElement;
-  const VERSION = "v0.7.1";
+  const VERSION = "v0.7.2";
   let chartInstance = 0;
 
   function api(path) {
@@ -37,6 +37,11 @@
         remaining: "restants",
         used: "utilisés",
         reset: "Réinitialisation",
+        quotaScale: "Échelle du quota restant",
+        quotaCritical: "Critique 0–25 %",
+        quotaLow: "Faible 25–50 %",
+        quotaModerate: "Modéré 50–75 %",
+        quotaHealthy: "Sain 75–100 %",
         stats: function (days) { return "Activité Hermes · " + (days === 1 ? "24 heures" : days + " jours"); },
         sessions: "Sessions",
         calls: "Appels API",
@@ -112,6 +117,11 @@
       remaining: "remaining",
       used: "used",
       reset: "Resets",
+      quotaScale: "Remaining allowance scale",
+      quotaCritical: "Critical 0–25%",
+      quotaLow: "Low 25–50%",
+      quotaModerate: "Moderate 50–75%",
+      quotaHealthy: "Healthy 75–100%",
       stats: function (days) { return "Hermes activity · " + (days === 1 ? "24 hours" : days + " days"); },
       sessions: "Sessions",
       calls: "API calls",
@@ -319,6 +329,13 @@
       h("h2", { className: "aum-card-title" }, t.account),
       h("p", { className: "aum-card-meta" }, t.sharedQuota),
       h("p", { className: "aum-card-meta" }, account.provider + (account.plan ? " · " + account.plan : "")),
+      h("div", { className: "aum-quota-legend", role: "list", "aria-label": t.quotaScale },
+        [["red", t.quotaCritical], ["orange", t.quotaLow], ["yellow", t.quotaModerate], ["green", t.quotaHealthy]].map(function (item) {
+          return h("span", { role: "listitem", key: item[0] },
+            h("i", { className: "aum-quota-swatch is-" + item[0], "aria-hidden": true }), item[1]
+          );
+        })
+      ),
       h("div", { className: "aum-window-list" }, (account.windows || []).map(function (window, index) {
         const quota = quotaPercentages(window);
         return h("div", { className: "aum-window", key: window.label + "-" + index },
@@ -329,13 +346,16 @@
           quota.used === null
             ? h("div", { className: "aum-progress is-unavailable", role: "status" }, t.usageUnavailable)
             : h("div", {
-                className: "aum-progress" + (quota.remaining <= 10 ? " is-danger" : ""),
+                className: "aum-progress",
                 role: "progressbar",
                 "aria-label": window.label + ": " + quota.remaining + "% " + t.remaining,
                 "aria-valuemin": 0,
                 "aria-valuemax": 100,
                 "aria-valuenow": quota.remaining
-              }, h("div", { className: "aum-progress-fill", style: { width: quota.remaining + "%" } })),
+              },
+                h("div", { className: "aum-progress-scale" }),
+                h("div", { className: "aum-progress-mask", style: { left: quota.remaining + "%", width: quota.used + "%" } })
+              ),
           h("div", { className: "aum-window-foot" },
             quota.used === null ? t.usageUnavailable : quota.used + "% " + t.used + (window.reset_at ? " · " + t.reset + " " + formatDate(window.reset_at) : "")
           )
