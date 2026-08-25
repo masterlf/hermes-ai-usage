@@ -7,6 +7,7 @@
 
   const React = SDK.React;
   const h = React.createElement;
+  const VERSION = "v0.7.2";
   let chartInstance = 0;
 
   function api(path) {
@@ -18,6 +19,7 @@
     if (locale.startsWith("fr")) {
       return {
         kicker: "TÉLÉMÉTRIE FOURNISSEUR",
+        versionLabel: "Version du plugin",
         title: "Consommation IA",
         subtitle: "Quota fournisseur, compteurs de tokens Hermes et historique récent — sans lire le contenu de tes prompts.",
         refresh: "Actualiser",
@@ -35,19 +37,31 @@
         remaining: "restants",
         used: "utilisés",
         reset: "Réinitialisation",
+        quotaScale: "Échelle du quota restant",
+        quotaCritical: "Critique 0–25 %",
+        quotaLow: "Faible 25–50 %",
+        quotaModerate: "Modéré 50–75 %",
+        quotaHealthy: "Sain 75–100 %",
         stats: function (days) { return "Activité Hermes · " + (days === 1 ? "24 heures" : days + " jours"); },
         sessions: "Sessions",
         calls: "Appels API",
         input: "Entrée",
         output: "Sortie",
-        cached: "Cache lu",
-        total: "Tokens bruts",
+        cached: "Lecture cache",
+        cacheWrite: "Cache écrit",
+        nonCacheRead: "Hors lecture cache",
+        nonCacheReadTokens: "Tokens hors lecture cache",
+        cacheReadTokens: "Tokens lus du cache",
+        rawTotal: "Total brut",
+        tokenSplit: "Répartition des tokens",
+        rawVolumeBand: "Palier de volume brut",
         chart: "Utilisation des tokens",
         currentProfileOwnership: function (profile) { return "Profil : " + profile; },
         allProfileOwnership: function (count) { return "Tous les profils · " + count + (count === 1 ? " profil consommateur" : " profils consommateurs"); },
         chartHint: "Créneaux UTC · clique sur une barre pour isoler les sessions correspondantes.",
         periodComposition: "Composition de la période",
         periodTotal: function (total, start, end) { return total + " tokens · du " + start + " au " + end + " UTC"; },
+        periodTokenSplit: function (nonCache, cacheRead, raw, start, end) { return "Hors lecture cache " + nonCache + " · Lecture cache " + cacheRead + " · Total brut " + raw + " · du " + start + " au " + end + " UTC"; },
         periodGroup: "Période d’utilisation des tokens",
         reasoningShare: function (percent, value) { return "Raisonnement " + percent + " de la sortie · " + value; },
         bucketBreakdown: function (date) { return "Répartition des tokens pour le " + date + " UTC"; },
@@ -85,6 +99,7 @@
     }
     return {
       kicker: "PROVIDER TELEMETRY",
+      versionLabel: "Plugin version",
       title: "AI Usage",
       subtitle: "Provider quota, Hermes token counters, and recent history — without reading prompt content.",
       refresh: "Refresh",
@@ -102,19 +117,31 @@
       remaining: "remaining",
       used: "used",
       reset: "Resets",
+      quotaScale: "Remaining allowance scale",
+      quotaCritical: "Critical 0–25%",
+      quotaLow: "Low 25–50%",
+      quotaModerate: "Moderate 50–75%",
+      quotaHealthy: "Healthy 75–100%",
       stats: function (days) { return "Hermes activity · " + (days === 1 ? "24 hours" : days + " days"); },
       sessions: "Sessions",
       calls: "API calls",
       input: "Input",
       output: "Output",
       cached: "Cache read",
-      total: "Raw tokens",
+      cacheWrite: "Cache write",
+      nonCacheRead: "Non-cache read",
+      nonCacheReadTokens: "Non-cache-read tokens",
+      cacheReadTokens: "Cache-read tokens",
+      rawTotal: "Raw total",
+      tokenSplit: "Token split",
+      rawVolumeBand: "Raw-volume band",
       chart: "Token usage",
       currentProfileOwnership: function (profile) { return "Profile: " + profile; },
       allProfileOwnership: function (count) { return "All profiles · " + count + " consuming " + (count === 1 ? "profile" : "profiles"); },
       chartHint: "UTC buckets · select a bar to isolate the matching sessions.",
       periodComposition: "Period composition",
       periodTotal: function (total, start, end) { return total + " tokens · " + start + "–" + end + " UTC"; },
+      periodTokenSplit: function (nonCache, cacheRead, raw, start, end) { return "Non-cache read " + nonCache + " · Cache read " + cacheRead + " · Raw total " + raw + " · " + start + "–" + end + " UTC"; },
       periodGroup: "Token usage period",
       reasoningShare: function (percent, value) { return "Reasoning " + percent + " of output · " + value; },
       bucketBreakdown: function (date) { return "Token breakdown for " + date + " UTC"; },
@@ -161,7 +188,7 @@
 
   function finiteToken(value) {
     const number = Number(value || 0);
-    return Number.isFinite(number) && number > 0 ? Math.min(number, Number.MAX_SAFE_INTEGER) : 0;
+    return Number.isFinite(number) && number > 0 ? Math.min(number, Math.floor(Number.MAX_SAFE_INTEGER / 4)) : 0;
   }
 
   function allocateShareTenths(values, total) {
@@ -186,11 +213,13 @@
     const cacheWrite = finiteToken(source.cache_write_tokens);
     const reasoning = Math.min(output, finiteToken(source.reasoning_tokens));
     const outputNonReasoning = output - reasoning;
-    const additiveTotal = input + output + cacheRead + cacheWrite;
+    const nonCacheRead = input + output + cacheWrite;
+    const rawTotal = nonCacheRead + cacheRead;
+    const additiveTotal = rawTotal;
     return {
       input: input, output: output, outputNonReasoning: outputNonReasoning,
       reasoning: reasoning, cacheRead: cacheRead, cacheWrite: cacheWrite,
-      additiveTotal: additiveTotal,
+      nonCacheRead: nonCacheRead, rawTotal: rawTotal, additiveTotal: additiveTotal,
       shareTenths: allocateShareTenths([input, output, cacheRead, cacheWrite], additiveTotal),
       reasoningOutputTenths: output > 0 ? Math.round(reasoning / output * 1000) : 0
     };
@@ -242,12 +271,12 @@
   function quotaPercentages(window) {
     const usedValue = Number(window && window.used_percent);
     const remainingValue = Number(window && window.remaining_percent);
-    const used = window && window.used_percent !== null && Number.isFinite(usedValue)
-      ? Math.max(0, Math.min(100, usedValue))
-      : window && window.remaining_percent !== null && Number.isFinite(remainingValue)
-        ? 100 - Math.max(0, Math.min(100, remainingValue))
+    const remaining = window && window.remaining_percent != null && Number.isFinite(remainingValue)
+      ? Math.max(0, Math.min(100, remainingValue))
+      : window && window.used_percent != null && Number.isFinite(usedValue)
+        ? 100 - Math.max(0, Math.min(100, usedValue))
         : null;
-    return { used: used, remaining: used === null ? null : 100 - used };
+    return { used: remaining === null ? null : 100 - remaining, remaining: remaining };
   }
 
   function tokenBand(value, t) {
@@ -279,7 +308,7 @@
   }
 
   function Stat(props) {
-    return h("div", { className: "aum-stat" },
+    return h("div", { className: "aum-stat" + (props.secondary ? " is-secondary" : "") },
       h("div", { className: "aum-stat-label" }, props.label),
       h("div", { className: "aum-stat-value" }, props.value)
     );
@@ -300,9 +329,15 @@
       h("h2", { className: "aum-card-title" }, t.account),
       h("p", { className: "aum-card-meta" }, t.sharedQuota),
       h("p", { className: "aum-card-meta" }, account.provider + (account.plan ? " · " + account.plan : "")),
+      h("div", { className: "aum-quota-legend", role: "list", "aria-label": t.quotaScale },
+        [["red", t.quotaCritical], ["orange", t.quotaLow], ["yellow", t.quotaModerate], ["green", t.quotaHealthy]].map(function (item) {
+          return h("span", { role: "listitem", key: item[0] },
+            h("i", { className: "aum-quota-swatch is-" + item[0], "aria-hidden": true }), item[1]
+          );
+        })
+      ),
       h("div", { className: "aum-window-list" }, (account.windows || []).map(function (window, index) {
         const quota = quotaPercentages(window);
-        const visualWidth = quota.used > 0 && quota.used < 1 ? "2px" : quota.used + "%";
         return h("div", { className: "aum-window", key: window.label + "-" + index },
           h("div", { className: "aum-window-head" },
             h("span", null, window.label),
@@ -311,13 +346,16 @@
           quota.used === null
             ? h("div", { className: "aum-progress is-unavailable", role: "status" }, t.usageUnavailable)
             : h("div", {
-                className: "aum-progress" + (quota.used >= 90 ? " is-danger" : ""),
+                className: "aum-progress",
                 role: "progressbar",
-                "aria-label": window.label + ": " + quota.used + "% " + t.used,
+                "aria-label": window.label + ": " + quota.remaining + "% " + t.remaining,
                 "aria-valuemin": 0,
                 "aria-valuemax": 100,
-                "aria-valuenow": quota.used
-              }, h("div", { className: "aum-progress-fill", style: { width: visualWidth } })),
+                "aria-valuenow": quota.remaining
+              },
+                h("div", { className: "aum-progress-scale" }),
+                h("div", { className: "aum-progress-mask", style: { left: quota.remaining + "%", width: quota.used + "%" } })
+              ),
           h("div", { className: "aum-window-foot" },
             quota.used === null ? t.usageUnavailable : quota.used + "% " + t.used + (window.reset_at ? " · " + t.reset + " " + formatDate(window.reset_at) : "")
           )
@@ -336,16 +374,19 @@
       ? historyDays
       : props.days;
     const t = props.t;
+    const composition = compositionOf(totals);
     return h("section", { className: "aum-card" },
       h("h2", { className: "aum-card-title" }, t.stats(scopeDays)),
       h("p", { className: "aum-card-meta" }, t.source),
       h("div", { className: "aum-stats" },
         h(Stat, { label: t.sessions, value: compact(totals.sessions) }),
         h(Stat, { label: t.calls, value: compact(totals.api_calls) }),
+        h(Stat, { label: t.nonCacheReadTokens, value: compact(composition.nonCacheRead) }),
+        h(Stat, { label: t.cacheReadTokens, value: compact(composition.cacheRead) }),
+        h(Stat, { label: t.rawTotal, value: compact(composition.rawTotal), secondary: true }),
         h(Stat, { label: t.input, value: compact(totals.input_tokens) }),
         h(Stat, { label: t.output, value: compact(totals.output_tokens) }),
-        h(Stat, { label: t.cached, value: compact(totals.cache_read_tokens) }),
-        h(Stat, { label: t.total, value: compact(totals.total_tokens) })
+        h(Stat, { label: t.cacheWrite, value: compact(totals.cache_write_tokens) })
       )
     );
   }
@@ -355,20 +396,30 @@
     if (!profiles.length) return null;
     return h("section", { className: "aum-card aum-table-card" },
       h("h2", { className: "aum-card-title" }, props.t.profileBreakdown),
-      h("div", { className: "aum-table-wrap" }, h("table", {
-        className: "aum-table",
+      h("div", {
+        className: "aum-table-wrap aum-profile-viewport",
+        tabIndex: 0,
+        "aria-label": props.t.profileBreakdown,
+        "data-profile-viewport": "five-rows"
+      }, h("table", {
+        className: "aum-table aum-profile-table",
         "aria-label": props.t.profileBreakdown
       },
         h("thead", null, h("tr", null,
-          h("th", null, props.t.profile),
-          h("th", { className: "aum-num" }, props.t.total),
-          h("th", { className: "aum-num" }, props.t.calls),
-          h("th", { className: "aum-num" }, props.t.sessions)
+          h("th", { scope: "col" }, props.t.profile),
+          h("th", { className: "aum-num", scope: "col" }, props.t.nonCacheRead),
+          h("th", { className: "aum-num", scope: "col" }, props.t.cached),
+          h("th", { className: "aum-num", scope: "col" }, props.t.rawTotal),
+          h("th", { className: "aum-num", scope: "col" }, props.t.calls),
+          h("th", { className: "aum-num", scope: "col" }, props.t.sessions)
         )),
         h("tbody", null, profiles.map(function (profile) {
+          const composition = compositionOf(profile);
           return h("tr", { key: profile.profile },
             h("td", { "data-label": props.t.profile }, profile.profile),
-            h("td", { className: "aum-num", "data-label": props.t.total }, compact(profile.total_tokens)),
+            h("td", { className: "aum-num", "data-label": props.t.nonCacheRead }, compact(composition.nonCacheRead)),
+            h("td", { className: "aum-num", "data-label": props.t.cached }, compact(composition.cacheRead)),
+            h("td", { className: "aum-num aum-secondary", "data-label": props.t.rawTotal }, compact(composition.rawTotal)),
             h("td", { className: "aum-num", "data-label": props.t.calls }, compact(profile.api_calls)),
             h("td", { className: "aum-num", "data-label": props.t.sessions }, compact(profile.sessions))
           );
@@ -473,13 +524,14 @@
       h("div", { className: "aum-composition" },
         h("div", { className: "aum-composition-head" },
           h("strong", null, t.periodComposition),
-          h("span", null, t.periodTotal(compact(period.additiveTotal), firstDate, lastDate))
+          h("span", null, t.periodTokenSplit(compact(period.nonCacheRead), compact(period.cacheRead), compact(period.rawTotal), firstDate, lastDate))
         ),
         h("div", {
           className: "aum-composition-strip",
           role: "img",
           "aria-label": period.additiveTotal
-            ? t.periodComposition + ": " + formatExactNumber(period.additiveTotal) + " " + t.tokens + "; "
+            ? t.periodComposition + ": " + t.nonCacheReadTokens + " " + formatExactNumber(period.nonCacheRead) + "; "
+              + t.cacheReadTokens + " " + formatExactNumber(period.cacheRead) + "; " + t.rawTotal + " " + formatExactNumber(period.rawTotal) + "; "
               + t.inputLegend + " " + percent(period.shareTenths[0]) + "; "
               + t.outputLegend + " " + percent(period.shareTenths[1]) + ", " + t.reasoningLegend + " " + formatExactNumber(period.reasoning) + "; "
               + t.cacheReadLegend + " " + percent(period.shareTenths[2]) + "; " + t.cacheWriteLegend + " " + percent(period.shareTenths[3])
@@ -549,7 +601,8 @@
               });
             });
             const label = formatBucket(point.bucket_start, series.bucket);
-            const tooltip = t.bucketBreakdown(label) + " · " + formatExactNumber(composition.additiveTotal) + " " + t.tokens
+            const tooltip = t.bucketBreakdown(label) + " · " + t.nonCacheReadTokens + " " + formatExactNumber(composition.nonCacheRead)
+              + " · " + t.cacheReadTokens + " " + formatExactNumber(composition.cacheRead) + " · " + t.rawTotal + " " + formatExactNumber(composition.rawTotal)
               + " · " + t.inputLegend + " " + formatExactNumber(composition.input) + " " + percent(composition.shareTenths[0])
               + " · " + t.outputLegend + " " + formatExactNumber(composition.output) + " " + percent(composition.shareTenths[1])
               + " · " + t.reasoningLegend + " " + formatExactNumber(composition.reasoning) + " " + percent(composition.reasoningOutputTenths) + " " + t.ofOutput
@@ -606,7 +659,8 @@
   }
 
   function bucketTooltip(point, composition, bucket, t, percent) {
-    return t.bucketBreakdown(formatBucket(point.bucket_start, bucket)) + " · " + formatExactNumber(composition.additiveTotal) + " " + t.tokens
+    return t.bucketBreakdown(formatBucket(point.bucket_start, bucket)) + " · " + t.nonCacheReadTokens + " " + formatExactNumber(composition.nonCacheRead)
+      + " · " + t.cacheReadTokens + " " + formatExactNumber(composition.cacheRead) + " · " + t.rawTotal + " " + formatExactNumber(composition.rawTotal)
       + " · " + compact(point.sessions) + " " + t.sessions + " · " + compact(point.api_calls) + " " + t.calls
       + " · " + t.inputLegend + " " + formatExactNumber(composition.input) + " " + percent(composition.shareTenths[0])
       + " · " + t.outputLegend + " " + formatExactNumber(composition.output) + " " + percent(composition.shareTenths[1])
@@ -645,15 +699,18 @@
             h("th", null, t.workload),
             h("th", null, t.model),
             h("th", { className: "aum-num" }, t.calls),
-            h("th", { className: "aum-num" }, t.tokens),
+            h("th", { className: "aum-num" }, t.tokenSplit),
             h("th", null, t.logRef)
           )),
           h("tbody", null, visibleRows.map(function (row, index) {
-            const band = tokenBand(row.total_tokens, t);
-            const tokenDetail = t.inputLegend + " " + compact(row.input_tokens)
-              + " · " + t.outputLegend + " " + compact(row.output_tokens)
-              + " · " + t.cacheReadLegend + " " + compact(row.cache_read_tokens)
-              + " · " + t.cacheWriteLegend + " " + compact(row.cache_write_tokens)
+            const composition = compositionOf(row);
+            const band = tokenBand(composition.rawTotal, t);
+            const tokenDetail = t.nonCacheReadTokens + " " + compact(composition.nonCacheRead)
+              + " · " + t.cacheReadTokens + " " + compact(composition.cacheRead)
+              + " · " + t.rawTotal + " " + compact(composition.rawTotal)
+              + " · " + t.inputLegend + " " + compact(composition.input)
+              + " · " + t.outputLegend + " " + compact(composition.output)
+              + " · " + t.cacheWriteLegend + " " + compact(composition.cacheWrite)
               + (row.reasoning_tokens ? " · " + t.reasoningLegend + " " + compact(row.reasoning_tokens) : "");
             return h("tr", { key: row.session_ref || (row.ended_at || row.started_at || "session") + "-" + index },
               h("td", { "data-label": t.date }, formatDate(row.ended_at || row.started_at), h("small", { className: "aum-duration" }, formatDuration(row.duration_seconds, row.is_active, t))),
@@ -664,9 +721,13 @@
               h("td", {
                 className: "aum-num aum-band-" + (band ? band.key : "none"),
                 title: tokenDetail,
-                "aria-label": band ? formatExactNumber(Number(row.total_tokens)) + " " + t.tokens + ", " + band.label : t.usageUnavailable,
-                "data-label": t.tokens
-              }, band ? compact(row.total_tokens) + " · " + band.label : "—"),
+                "aria-label": band ? t.nonCacheReadTokens + " " + formatExactNumber(composition.nonCacheRead) + ", " + t.cacheReadTokens + " " + formatExactNumber(composition.cacheRead) + ", " + t.rawTotal + " " + formatExactNumber(composition.rawTotal) + ", " + t.rawVolumeBand + " " + band.label : t.usageUnavailable,
+                "data-label": t.tokenSplit
+              }, band ? h("span", null,
+                h("span", { className: "aum-token-value", "data-token-kind": "non-cache-read" }, t.nonCacheRead + " " + compact(composition.nonCacheRead)),
+                h("span", { className: "aum-token-value", "data-token-kind": "cache-read" }, t.cached + " " + compact(composition.cacheRead)),
+                h("small", { className: "aum-duration" }, t.rawTotal + " " + compact(composition.rawTotal) + " · " + t.rawVolumeBand + " " + band.label)
+              ) : "—"),
               h("td", { "data-label": t.logRef }, row.session_ref ? h("code", { className: "aum-session-ref", title: t.logRef }, row.session_ref) : "—")
             );
           }))
@@ -683,7 +744,7 @@
     const periodState = React.useState(7);
     const days = periodState[0];
     const setDays = periodState[1];
-    const scopeState = React.useState("current");
+    const scopeState = React.useState("all");
     const scope = scopeState[0];
     const setScope = scopeState[1];
     const selectionState = React.useState(null);
@@ -731,7 +792,10 @@
     return h("div", { className: "aum-page" },
       h("header", { className: "aum-hero" },
         h("div", null,
-          h("div", { className: "aum-kicker" }, t.kicker),
+          h("div", { className: "aum-kicker" },
+            h("span", null, t.kicker),
+            h("span", { className: "aum-version", "aria-label": t.versionLabel + " " + VERSION }, VERSION)
+          ),
           h("h1", { className: "aum-title" }, t.title),
           h("p", { className: "aum-subtitle" }, t.subtitle)
         ),
@@ -761,7 +825,6 @@
         h(AccountCard, { account: data.account, t: t }),
         h(StatsCard, { history: data.history, t: t, days: days })
       ),
-      h(ProfileBreakdown, { history: data.history, t: t }),
       h(UsageChart, {
         history: data.history,
         t: t,
@@ -775,6 +838,7 @@
           setSelectedBucket(function (current) { return current === value ? null : value; });
         }
       }),
+      h(ProfileBreakdown, { history: data.history, t: t }),
       h(HistoryTable, { history: data.history, t: t, selectedBucket: selectedBucket }),
       h("p", { className: "aum-source-note" }, t.source)
     );

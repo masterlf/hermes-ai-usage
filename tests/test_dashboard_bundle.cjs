@@ -23,8 +23,8 @@ const history = {
   history: {
     days: 7,
     profile_scope: 'current',
-    totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, total_tokens: 170 },
-    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, total_tokens: 170 }],
+    totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 },
+    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 }],
     partial: true,
     series: {
       bucket: 'day',
@@ -35,7 +35,7 @@ const history = {
         { bucket_start: 1785024000, sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 }
       ]
     },
-    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }]
+    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 119880, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }]
   }
 };
 const React = {
@@ -87,9 +87,9 @@ const sandbox = {
             ...history.history,
             profile_scope: 'all',
             profiles: [
-              { profile: 'security', sessions: 2, api_calls: 3, total_tokens: 170 },
-              { profile: 'alpha', sessions: 1, api_calls: 1, total_tokens: 50 },
-              { profile: 'idle', sessions: 0, api_calls: 0, total_tokens: 0 }
+              { profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 },
+              { profile: 'alpha', sessions: 1, api_calls: 1, input_tokens: 20, output_tokens: 10, cache_read_tokens: 20, cache_write_tokens: 0, total_tokens: 50 },
+              { profile: 'idle', sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: 0 }
             ]
           } });
         }
@@ -168,28 +168,65 @@ function contrastRatio(foreground, background) {
 
 (async () => {
   const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
+  const manifest = JSON.parse(fs.readFileSync('runtime/dashboard/manifest.json', 'utf8'));
+  const readme = fs.readFileSync('README.md', 'utf8');
+  if (manifest.version !== '0.7.2') throw new Error('dashboard manifest version is not 0.7.2');
+  if (!readme.includes('Current plugin version: **v0.7.2**')) throw new Error('README does not identify v0.7.2');
+  if (!readme.includes('non_cache_read_tokens = input_tokens + output_tokens + cache_write_tokens')) throw new Error('README does not document the neutral metric formula');
+  if (!readme.includes('Desktop and Web Dashboard initially request `scope=all`')) throw new Error('README does not document the client scope default');
   const instrumentedSource = dashboardSource.replace(
     'registry.register("ai-usage-monitor", AIUsagePage);',
-    'window.__compositionOf = compositionOf; window.__UsageChart = UsageChart; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
+    'window.__compositionOf = compositionOf; window.__quotaPercentages = quotaPercentages; window.__AccountCard = AccountCard; window.__ProfileBreakdown = ProfileBreakdown; window.__UsageChart = UsageChart; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
   );
   vm.runInNewContext(instrumentedSource, sandbox);
   const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
   const compositionOf = sandbox.window.__compositionOf;
+  const quotaPercentages = sandbox.window.__quotaPercentages;
+  const AccountCard = sandbox.window.__AccountCard;
+  const ProfileBreakdown = sandbox.window.__ProfileBreakdown;
   const UsageChart = sandbox.window.__UsageChart;
   const textForTest = sandbox.window.__text;
   if (typeof compositionOf !== 'function') throw new Error('dashboard composition helper missing');
   if (typeof UsageChart !== 'function') throw new Error('dashboard UsageChart test export missing');
+  for (const [fixture, expectedUsed, expectedRemaining] of [
+    [{ remaining_percent: 97 }, 3, 97],
+    [{ used_percent: 3 }, 3, 97],
+    [{ remaining_percent: 0 }, 100, 0],
+    [{ remaining_percent: 100 }, 0, 100],
+    [{ remaining_percent: 140 }, 0, 100],
+    [{ remaining_percent: -5 }, 100, 0],
+    [{ remaining_percent: Infinity, used_percent: 3 }, 3, 97]
+  ]) {
+    const quota = quotaPercentages(fixture);
+    if (quota.used !== expectedUsed || quota.remaining !== expectedRemaining) throw new Error('dashboard quota normalization failed: ' + JSON.stringify(fixture));
+  }
+  const unavailableQuota = quotaPercentages({ remaining_percent: null, used_percent: null });
+  if (unavailableQuota.used !== null || unavailableQuota.remaining !== null) throw new Error('dashboard unavailable quota was converted to a number');
+  for (const remaining of [0, 20, 40, 60, 80, 97, 100]) {
+    const quotaTree = AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: remaining }] }, t: textForTest() });
+    const progress = findFirst(quotaTree, node => node.props && node.props.role === 'progressbar');
+    const gradient = findFirst(progress, node => node.props && node.props.className === 'aum-progress-scale');
+    const mask = findFirst(progress, node => node.props && node.props.className === 'aum-progress-mask');
+    if (!progress || progress.props['aria-valuenow'] !== remaining || !progress.props['aria-label'].includes(textForTest().remaining)) throw new Error('dashboard progress does not expose remaining quota: ' + remaining);
+    if (!gradient) throw new Error('dashboard full-track quota gradient missing');
+    if (!mask || mask.props.style.left !== remaining + '%' || mask.props.style.width !== (100 - remaining) + '%') throw new Error('dashboard quota mask geometry is incorrect: ' + remaining);
+  }
+  const directRemainingTree = AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: 97, used_percent: 80, reset_at: '2026-07-29T01:07:13Z' }] }, t: textForTest() });
+  if (!flatten(directRemainingTree).includes('3% utilisés') || !flatten(directRemainingTree).includes('Réinitialisation')) throw new Error('dashboard quota footer did not retain used/reset details');
+  for (const label of ['Critique 0–25 %', 'Faible 25–50 %', 'Modéré 50–75 %', 'Sain 75–100 %']) {
+    if (!flatten(directRemainingTree).includes(label)) throw new Error('dashboard visible quota scale label missing: ' + label);
+  }
   const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
-  if (normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('dashboard composition math is incorrect');
+  if (normal.nonCacheRead !== 40 || normal.rawTotal !== 100 || normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('dashboard composition math is incorrect');
   if (normal.shareTenths.join(',') !== '100,200,600,100') throw new Error('dashboard top-level ratios are incorrect: ' + normal.shareTenths);
   const thirds = compositionOf({ input_tokens: 1, output_tokens: 1, cache_read_tokens: 1 });
   if (thirds.shareTenths.reduce((sum, value) => sum + value, 0) !== 1000) throw new Error('dashboard displayed ratios do not total 100.0%');
   const hostile = compositionOf({ input_tokens: -1, output_tokens: 2, reasoning_tokens: 99, cache_read_tokens: Infinity, cache_write_tokens: NaN });
-  if (hostile.additiveTotal !== 2 || hostile.reasoning !== 2 || hostile.outputNonReasoning !== 0) throw new Error('dashboard hostile values were not normalized');
+  if (hostile.nonCacheRead !== 2 || hostile.rawTotal !== 2 || hostile.additiveTotal !== 2 || hostile.reasoning !== 2 || hostile.outputNonReasoning !== 0) throw new Error('dashboard hostile values were not normalized');
   const zero = compositionOf({});
   if (zero.additiveTotal !== 0 || zero.shareTenths.some(value => value !== 0) || zero.reasoningOutputTenths !== 0) throw new Error('dashboard zero composition is not finite');
   const tiny = compositionOf({ input_tokens: 100, output_tokens: 100, cache_read_tokens: 99000, cache_write_tokens: 1 });
-  if (tiny.additiveTotal !== 99201 || tiny.cacheWrite !== 1) throw new Error('dashboard tiny/huge-cache composition lost exact values');
+  if (tiny.nonCacheRead !== 201 || tiny.rawTotal !== 99201 || tiny.additiveTotal !== 99201 || tiny.cacheWrite !== 1) throw new Error('dashboard tiny/huge-cache composition lost exact values');
   const overflow = compositionOf({
     input_tokens: Number.MAX_VALUE,
     output_tokens: Number.MAX_VALUE,
@@ -197,7 +234,7 @@ function contrastRatio(foreground, background) {
     cache_write_tokens: Number.MAX_VALUE,
     reasoning_tokens: Number.MAX_VALUE
   });
-  if (!Number.isFinite(overflow.additiveTotal) || overflow.shareTenths.some(value => !Number.isFinite(value))) {
+  if (!Number.isSafeInteger(overflow.nonCacheRead) || !Number.isSafeInteger(overflow.rawTotal) || !Number.isFinite(overflow.additiveTotal) || overflow.shareTenths.some(value => !Number.isFinite(value))) {
     throw new Error('dashboard aggregate overflow was not bounded');
   }
   if (overflow.shareTenths.reduce((sum, value) => sum + value, 0) !== 1000) {
@@ -212,10 +249,24 @@ function contrastRatio(foreground, background) {
   }
   if (!dashboardStyles.includes('repeating-linear-gradient') || !dashboardStyles.includes('grid-template-columns: repeat(2')) throw new Error('dashboard reasoning pattern/mobile composition layout missing');
   if (!/@media\s*\(forced-colors:\s*active\)/.test(dashboardStyles)) throw new Error('dashboard forced-colors support missing');
+  const quotaScaleRule = dashboardStyles.match(/\.aum-progress-scale\s*\{([^}]*)\}/);
+  const quotaMaskRule = dashboardStyles.match(/\.aum-progress-mask\s*\{([^}]*)\}/);
+  const fixedQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%)';
+  if (!quotaScaleRule || !quotaScaleRule[1].includes(fixedQuotaGradient)) throw new Error('dashboard fixed quota gradient stops are missing or reordered');
+  if (quotaScaleRule[1].includes('var(--color-primary)')) throw new Error('dashboard quota gradient regressed to host primary');
+  if (!quotaMaskRule || !quotaMaskRule[1].includes('background: color-mix(in srgb, var(--color-muted) 60%, transparent)')) throw new Error('dashboard consumed mask does not restore the track color');
+  for (const color of ['#ff5c5c', '#ff9f43', '#f6d860', '#4ade80']) {
+    if (contrastRatio(color, '#041c1c') < 3) throw new Error('dashboard quota stop contrast is below 3:1: ' + color);
+  }
   if (!/\.aum-period\s*\{[^}]*min-height:\s*44px;[^}]*min-width:\s*44px;/.test(dashboardStyles.slice(dashboardStyles.indexOf('@media (max-width: 720px)')))) {
     throw new Error('dashboard narrow period targets are not durably 44x44');
   }
   if (!dashboardSource.includes('role: "progressbar"')) throw new Error('dashboard quota progress semantics missing');
+  const profileViewportRule = dashboardStyles.match(/\.aum-profile-viewport\s*\{([^}]*)\}/);
+  if (!profileViewportRule || !profileViewportRule[1].includes('--aum-profile-row-height: 2.75rem') || !profileViewportRule[1].includes('--aum-profile-header-height: 2.5rem')) throw new Error('dashboard profile viewport sizing variables missing');
+  if (!profileViewportRule[1].includes('max-height: calc(var(--aum-profile-header-height) + 5 * var(--aum-profile-row-height))') || !profileViewportRule[1].includes('overflow: auto')) throw new Error('dashboard profile viewport is not exactly five rows with automatic scrolling');
+  if (!/\.aum-profile-table thead th\s*\{[^}]*position:\s*sticky/.test(dashboardStyles)) throw new Error('dashboard profile header is not sticky');
+  if (!dashboardStyles.includes('.aum-table.aum-profile-table { min-width: 680px')) throw new Error('dashboard profile table lacks six-column horizontal overflow floor');
   if (dashboardStyles.includes('prefers-color-scheme')) throw new Error('token bands must follow the dashboard theme, not the OS theme');
   const sharedBandRule = dashboardStyles.match(/\.aum-band-green,[^{]+\{([^}]*)\}/);
   if (!sharedBandRule || !sharedBandRule[1].includes('color: var(--color-foreground)')) {
@@ -237,12 +288,28 @@ function contrastRatio(foreground, background) {
   if (!effect) throw new Error('dashboard effect was not registered');
   effect();
   await new Promise(resolve => setImmediate(resolve));
+  const initialHistoryCall = calls.find(path => path.includes('/history?'));
+  if (!initialHistoryCall || !initialHistoryCall.includes('scope=all')) throw new Error('dashboard initial request is not all-profile: ' + calls.join(', '));
   const rendered = flatten(render());
+  if (!rendered.includes('v0.7.2')) throw new Error('dashboard visible plugin version missing');
+  const renderedOrder = ['Utilisation des tokens', 'Consommation par profil', 'Sessions récentes'].map(label => rendered.indexOf(label));
+  if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('dashboard chart/profile/recent order is incorrect: ' + renderedOrder);
   if (!rendered.includes('35% restants')) throw new Error('provider quota fallback was not rendered');
   if (!rendered.includes('65% utilisés')) throw new Error('provider used fallback was not rendered');
   if (!rendered.includes('gpt-test')) throw new Error('history row was not rendered: ' + rendered);
   if (!rendered.includes('Utilisation des tokens')) throw new Error('usage chart was not rendered: ' + rendered);
-  if (!rendered.includes('Utilisation des tokens · Profil : security')) throw new Error('French dashboard current profile ownership missing from chart heading: ' + rendered);
+  if (!rendered.includes('Utilisation des tokens · Tous les profils · 2 profils consommateurs')) throw new Error('French dashboard initial all-profile ownership missing from chart heading: ' + rendered);
+  if (!rendered.includes('Tokens hors lecture cache') || !rendered.includes('Tokens lus du cache') || !rendered.includes('Total brut')) throw new Error('French dashboard split token summary missing: ' + rendered);
+  const initialScopeSelector = findFirst(render(), node => node.type === 'select' && node.props && node.props['aria-label']);
+  if (!initialScopeSelector || initialScopeSelector.props.value !== 'all') throw new Error('dashboard all-profile selector state missing');
+  initialScopeSelector.props.onChange({ target: { value: 'current' } });
+  render();
+  effect();
+  await new Promise(resolve => setImmediate(resolve));
+  const latestHistoryCall = calls.filter(path => path.includes('/history?')).at(-1);
+  if (latestHistoryCall.includes('scope=all')) throw new Error('dashboard current-profile request retained all scope: ' + latestHistoryCall);
+  const currentRendered = flatten(render());
+  if (!currentRendered.includes('Utilisation des tokens · Profil : security')) throw new Error('French dashboard did not switch back to current profile: ' + currentRendered);
   stateCursor = 0;
   const zeroCurrentChart = flatten(UsageChart({
     history: {
@@ -275,21 +342,39 @@ function contrastRatio(foreground, background) {
   if (!rendered.includes('Élevée')) throw new Error('visible token band was not rendered: ' + rendered);
   const tokenBandCell = findFirst(render(), node => node.type === 'td' && String(node.props?.className || '').includes('aum-band-'));
   if (!tokenBandCell?.props['aria-label']?.includes(new Intl.NumberFormat('fr').format(120000))) throw new Error('dashboard history exact value did not use active French locale');
+  const visibleFrenchSplit = findAll(tokenBandCell, node => node.type === 'span' && node.props && node.props['data-token-kind']).map(flatten);
+  if (visibleFrenchSplit.join('|') !== 'Hors lecture cache 120|Lecture cache 119.9k') throw new Error('dashboard visible French row labels are not bound to their values: ' + visibleFrenchSplit.join('|'));
   if (!rendered.includes('CLI · Sous-agent') || !rendered.includes('security')) throw new Error('profile-labelled workload was not rendered: ' + rendered);
   if (!rendered.includes('Consommation par profil') || !rendered.includes('Données partielles')) throw new Error('profile breakdown/partial warning missing: ' + rendered);
   const profileTable = findFirst(render(), node => node.type === 'table' && node.props && node.props['aria-label'] === 'Consommation par profil');
   if (!profileTable) throw new Error('profile breakdown table missing');
   const profileLabels = findAll(profileTable, node => node.type === 'td').map(node => node.props && node.props['data-label']);
-  for (const label of ['Profil', 'Tokens bruts', 'Appels API', 'Sessions']) {
+  for (const label of ['Profil', 'Hors lecture cache', 'Lecture cache', 'Total brut', 'Appels API', 'Sessions']) {
     if (!profileLabels.includes(label)) throw new Error('profile mobile field label missing: ' + label);
   }
+  const sixProfiles = Array.from({ length: 6 }, (_, index) => ({ profile: 'profile-' + index, sessions: index, api_calls: index, input_tokens: index + 1 }));
+  const profileFixture = ProfileBreakdown({ history: { profiles: sixProfiles }, t: textForTest() });
+  const profileViewport = findFirst(profileFixture, node => node.props && node.props['data-profile-viewport'] === 'five-rows');
+  const fixtureTable = findFirst(profileFixture, node => node.type === 'table');
+  if (!profileViewport || profileViewport.props.tabIndex !== 0 || !profileViewport.props['aria-label']) throw new Error('dashboard profile viewport is not keyboard discoverable');
+  if (!String(profileViewport.props.className).includes('aum-profile-viewport')) throw new Error('dashboard durable profile viewport class missing');
+  const fixtureBody = findFirst(fixtureTable, node => node.type === 'tbody');
+  if (findAll(fixtureBody, node => node.type === 'tr').length !== 6) throw new Error('dashboard profile viewport discarded rows');
+  if (!String(fixtureTable.props.className).includes('aum-profile-table')) throw new Error('dashboard profile table selector missing');
+  const profileHeader = findFirst(fixtureTable, node => node.type === 'thead');
+  if (!profileHeader || findAll(profileHeader, node => node.type === 'th' && node.props.scope === 'col').length !== 6) throw new Error('dashboard native profile column headers missing');
   if (!rendered.includes('partagé au niveau du compte')) throw new Error('shared account quota wording missing: ' + rendered);
   if (!rendered.includes('2 min 05 s')) throw new Error('session duration was not rendered: ' + rendered);
   sandbox.document.documentElement.lang = 'en';
-  const englishRendered = flatten(render());
+  const englishTree = render();
+  const englishRendered = flatten(englishTree);
   if (!englishRendered.includes('Token usage · Profile: security')) throw new Error('English dashboard current profile ownership missing from chart heading: ' + englishRendered);
+  if (!englishRendered.includes('Non-cache-read tokens') || !englishRendered.includes('Cache-read tokens') || !englishRendered.includes('Raw total')) throw new Error('English dashboard split token copy missing: ' + englishRendered);
   if (!englishRendered.includes('2m 05s')) throw new Error('English session duration was not localized: ' + englishRendered);
   if (!englishRendered.includes('Period composition') || !englishRendered.includes('Reasoning (within output)')) throw new Error('English dashboard composition copy missing: ' + englishRendered);
+  const englishTokenBandCell = findFirst(englishTree, node => node.type === 'td' && String(node.props?.className || '').includes('aum-band-'));
+  const visibleEnglishSplit = findAll(englishTokenBandCell, node => node.type === 'span' && node.props && node.props['data-token-kind']).map(flatten);
+  if (visibleEnglishSplit.join('|') !== 'Non-cache read 120|Cache read 119.9k') throw new Error('dashboard visible English row labels are not bound to their values: ' + visibleEnglishSplit.join('|'));
   sandbox.document.documentElement.lang = 'fr';
   if (rendered.includes('1970')) throw new Error('Unix seconds were rendered as milliseconds: ' + rendered);
   const chart = findFirst(render(), node => node.type === 'svg' && node.props && node.props.role === 'group');
@@ -370,5 +455,6 @@ function contrastRatio(foreground, background) {
   if (!calls.every(path => path.startsWith('/api/plugins/ai-usage-monitor/'))) {
     throw new Error('unexpected dashboard API destination');
   }
+  if (/\b(?:billable|cost|fresh)\b|uncached[- ]input/i.test(dashboardSource)) throw new Error('dashboard copy implies spend/provider charging semantics');
   console.log('dashboard bundle smoke: ok');
 })().catch(error => { console.error(error); process.exit(1); });

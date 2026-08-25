@@ -5,6 +5,43 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-08-25
+
+### Fixed
+
+- Desktop and Web quota bars now expose remaining allowance on one fixed red-to-green scale,
+  masking the consumed right-hand portion instead of compressing all colors into the remainder.
+- A visible English/French threshold legend supplements the progress value so status does not
+  depend on color alone, while forced-colors and reduced-motion behavior remain supported.
+
+## [0.7.1] - 2026-08-25
+
+### Fixed
+
+- Desktop and Web now place the compact per-profile table directly between the token chart
+  and recent history, retaining every profile in a keyboard-scrollable five-row viewport.
+- Quota bars now fill and expose the remaining percentage, matching their adjacent headline,
+  while retaining the used percentage and reset time in the footer.
+
+### Changed
+
+- Both surfaces visibly identify plugin version v0.7.1 in their headers.
+
+## [0.7.0] - 2026-08-24
+
+### Added
+
+- v0.7.0 initially selects All profiles in Desktop and Web while preserving the selected
+  scope across refresh, period changes, and bucket drill-downs.
+- Neutral `non_cache_read_tokens` presentation (`input_tokens + output_tokens +
+  cache_write_tokens`) now separates non-cache-read and cache-read counters throughout the
+  English/French UI, with raw total retained only as labelled secondary context.
+
+### Changed
+
+- Per-profile and recent-session views now expose non-cache read, cache read, raw total,
+  calls, and sessions explicitly; existing thresholds are labelled as raw-volume bands.
+
 ## [0.6.1] - 2026-08-24
 
 ### Fixed
@@ -110,7 +147,10 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only provider-quota snapshots and seven-day token history.
 - French and English UI text.
 
-[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.2
+[0.7.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.1
+[0.7.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.0
 [0.6.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.6.1
 [0.6.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.6.0
 [0.5.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.5.0
