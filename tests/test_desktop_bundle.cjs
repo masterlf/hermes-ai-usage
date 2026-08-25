@@ -148,15 +148,29 @@ function resolveTree(node) {
   };
 }
 const Progress = sandbox.globalThis.__Progress;
-const healthyProgress = resolveTree(Progress({ quotaWindow: { label: 'Session', remaining_percent: 97, used_percent: 80 } }));
-if (healthyProgress.props['aria-valuenow'] !== 97 || !healthyProgress.props['aria-label'].includes('remaining')) throw new Error('Desktop progress does not expose remaining quota');
-if (healthyProgress.props.children.props.style.width !== '97%') throw new Error('Desktop 97% remaining does not fill 97%');
-if (String(healthyProgress.props.children.props.className).includes('danger')) throw new Error('Desktop healthy remaining quota is marked dangerous');
-const lowProgress = resolveTree(Progress({ quotaWindow: { label: 'Session', remaining_percent: 10 } }));
-if (!String(lowProgress.props.children.props.className).includes('danger')) throw new Error('Desktop low remaining quota is not marked dangerous');
+for (const remaining of [0, 20, 40, 60, 80, 97, 100]) {
+  const progress = resolveTree(Progress({ quotaWindow: { label: 'Session', remaining_percent: remaining } }));
+  const gradient = findAll(progress, node => node.props && node.props['data-quota-gradient'] === 'fixed-scale')[0];
+  const mask = findAll(progress, node => node.props && node.props['data-quota-mask'] === 'consumed')[0];
+  if (progress.props['aria-valuenow'] !== remaining || !progress.props['aria-label'].includes('remaining')) throw new Error('Desktop progress does not expose remaining quota: ' + remaining);
+  if (!gradient || gradient.props.style.width !== '100%') throw new Error('Desktop quota gradient is not fixed to the full track');
+  if (!mask || mask.props.style.left !== remaining + '%' || mask.props.style.width !== (100 - remaining) + '%') throw new Error('Desktop quota mask geometry is incorrect: ' + remaining);
+}
+const desktopQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%)';
+if (!source.includes(desktopQuotaGradient)) throw new Error('Desktop fixed quota gradient stops are missing or reordered');
+if (String(Progress).includes('bg-(--ui-accent)') || String(Progress).includes('bg-(--ui-danger)')) throw new Error('Desktop quota gradient regressed to a host semantic fill');
+for (const color of ['#ff5c5c', '#ff9f43', '#f6d860', '#4ade80']) {
+  const foreground = relativeLuminance(color);
+  const background = relativeLuminance('#041c1c');
+  const contrast = (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+  if (contrast < 3) throw new Error('Desktop quota stop contrast is below 3:1: ' + color);
+}
 const AccountCard = sandbox.globalThis.__AccountCard;
 const directRemainingCard = resolveTree(AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: 97, used_percent: 80, reset_at: '2026-07-29T01:07:13Z' }] } }));
 if (!flatten(directRemainingCard).includes('3% used') || !flatten(directRemainingCard).includes('Resets')) throw new Error('Desktop quota footer did not retain used/reset details');
+for (const label of ['Critical 0–25%', 'Low 25–50%', 'Moderate 50–75%', 'Healthy 75–100%']) {
+  if (!flatten(directRemainingCard).includes(label)) throw new Error('Desktop visible quota scale label missing: ' + label);
+}
 const ProfileBreakdown = sandbox.globalThis.__ProfileBreakdown;
 const sixProfiles = Array.from({ length: 6 }, (_, index) => ({ profile: 'profile-' + index, sessions: index, api_calls: index, input_tokens: index + 1 }));
 const profileFixture = resolveTree(ProfileBreakdown({ history: { profiles: sixProfiles } }));
@@ -228,7 +242,7 @@ if (restCalls[restCalls.length - 1].includes('scope=all')) throw new Error('Desk
 sandbox.globalThis.__setHarnessStateful(false);
 const tree = resolveTree(page.render());
 const rendered = flatten(tree);
-if (!rendered.includes('v0.7.1')) throw new Error('Desktop visible plugin version missing');
+if (!rendered.includes('v0.7.2')) throw new Error('Desktop visible plugin version missing');
 const renderedOrder = ['Token usage', 'Usage by profile', 'Recent usage'].map(label => rendered.indexOf(label));
 if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('Desktop chart/profile/recent order is incorrect: ' + renderedOrder);
 if (!rendered.includes('Token usage')) throw new Error('Desktop usage chart missing: ' + rendered);

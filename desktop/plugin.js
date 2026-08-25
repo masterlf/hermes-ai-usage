@@ -15,7 +15,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'ai-usage-monitor'
 const ROUTE = '/ai-usage'
-const VERSION = 'v0.7.1'
+const VERSION = 'v0.7.2'
 let pluginContext = null
 let chartInstance = 0
 
@@ -218,16 +218,55 @@ function Progress({ quotaWindow }) {
     children: t('usageUnavailable')
   })
   return jsx('div', {
-    className: 'h-2 w-full overflow-hidden rounded-full bg-(--ui-stroke-secondary)',
+    className: 'relative h-2 w-full overflow-hidden rounded-full bg-(--ui-stroke-secondary)',
     role: 'progressbar',
     'aria-label': `${quotaWindow.label}: ${quota.remaining}% ${t('remainingWord')}`,
     'aria-valuemin': 0,
     'aria-valuemax': 100,
     'aria-valuenow': quota.remaining,
-    children: jsx('div', {
-      className: `h-full rounded-full transition-[width] motion-reduce:transition-none forced-colors:bg-[Highlight] ${quota.remaining <= 10 ? 'bg-(--ui-danger)' : 'bg-(--ui-accent)'}`,
-      style: { width: `${quota.remaining}%` }
-    })
+    children: [
+      jsx('div', {
+        className: 'absolute inset-0 h-full forced-colors:bg-[Highlight]',
+        'data-quota-gradient': 'fixed-scale',
+        style: {
+          width: '100%',
+          background: 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%)'
+        }
+      }),
+      jsx('div', {
+        className: 'absolute inset-y-0 bg-(--ui-stroke-secondary) transition-[left,width] motion-reduce:transition-none forced-colors:bg-[Canvas]',
+        'data-quota-mask': 'consumed',
+        style: { left: `${quota.remaining}%`, width: `${quota.used}%` }
+      })
+    ]
+  })
+}
+
+function QuotaScaleLegend() {
+  const t = usePluginI18n(ID)
+  const items = [
+    ['#ff5c5c', t('quotaCritical')],
+    ['#ff9f43', t('quotaLow')],
+    ['#f6d860', t('quotaModerate')],
+    ['#4ade80', t('quotaHealthy')]
+  ]
+  return jsx('div', {
+    className: 'mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-[0.6875rem] text-(--ui-text-tertiary) sm:grid-cols-4',
+    role: 'list',
+    'aria-label': t('quotaScale'),
+    children: items.map(([color, label]) => jsxs('span', {
+      className: 'inline-flex items-center gap-1',
+      role: 'listitem',
+      children: [
+        jsx('span', {
+          className: 'size-2 rounded-full forced-colors:border forced-colors:border-[CanvasText]',
+          style: { background: color },
+          'aria-hidden': true
+        }),
+        label
+      ],
+      key: label
+    }))
   })
 }
 
@@ -296,6 +335,7 @@ function AccountCard({ account }) {
           })
         ]
       }),
+      jsx(QuotaScaleLegend, {}),
       jsx('div', {
         className: 'mt-3 grid gap-3',
         children: (account.windows || []).map((quotaWindow, index) => {
@@ -890,6 +930,11 @@ export default {
         codexCaveat: 'This is the Codex allowance attached to your ChatGPT subscription, not a universal percentage for ordinary ChatGPT conversations.',
         remaining: value => `${value}% remaining`,
         remainingWord: 'remaining',
+        quotaScale: 'Remaining allowance scale',
+        quotaCritical: 'Critical 0–25%',
+        quotaLow: 'Low 25–50%',
+        quotaModerate: 'Moderate 50–75%',
+        quotaHealthy: 'Healthy 75–100%',
         used: value => `${value}% used`,
         usedWord: 'used',
         resets: value => `Resets ${value}`,
@@ -969,6 +1014,11 @@ export default {
         codexCaveat: 'Il s’agit du quota Codex rattaché à ton abonnement ChatGPT, pas d’un pourcentage universel pour les conversations ChatGPT ordinaires.',
         remaining: value => `${value} % restants`,
         remainingWord: 'restants',
+        quotaScale: 'Échelle du quota restant',
+        quotaCritical: 'Critique 0–25 %',
+        quotaLow: 'Faible 25–50 %',
+        quotaModerate: 'Modéré 50–75 %',
+        quotaHealthy: 'Sain 75–100 %',
         used: value => `${value} % utilisés`,
         usedWord: 'utilisés',
         resets: value => `Réinitialisation ${value}`,
