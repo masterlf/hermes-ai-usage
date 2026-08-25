@@ -176,18 +176,23 @@ function contrastRatio(foreground, background) {
   if (!readme.includes('Desktop and Web Dashboard initially request `scope=all`')) throw new Error('README does not document the client scope default');
   const instrumentedSource = dashboardSource.replace(
     'registry.register("ai-usage-monitor", AIUsagePage);',
-    'window.__compositionOf = compositionOf; window.__quotaPercentages = quotaPercentages; window.__AccountCard = AccountCard; window.__ProfileBreakdown = ProfileBreakdown; window.__UsageChart = UsageChart; window.__HistoryUnavailable = HistoryUnavailable; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
+    'window.__compositionOf = compositionOf; window.__quotaPercentages = quotaPercentages; window.__normalizeHistoryResponse = normalizeHistoryResponse; window.__AccountCard = AccountCard; window.__ProfileBreakdown = ProfileBreakdown; window.__UsageChart = UsageChart; window.__HistoryUnavailable = HistoryUnavailable; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
   );
   vm.runInNewContext(instrumentedSource, sandbox);
   const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
   const compositionOf = sandbox.window.__compositionOf;
   const quotaPercentages = sandbox.window.__quotaPercentages;
+  const normalizeHistoryResponse = sandbox.window.__normalizeHistoryResponse;
   const AccountCard = sandbox.window.__AccountCard;
   const ProfileBreakdown = sandbox.window.__ProfileBreakdown;
   const UsageChart = sandbox.window.__UsageChart;
   const textForTest = sandbox.window.__text;
   if (typeof compositionOf !== 'function') throw new Error('dashboard composition helper missing');
   if (typeof UsageChart !== 'function') throw new Error('dashboard UsageChart test export missing');
+  if (normalizeHistoryResponse({})?.available !== false || normalizeHistoryResponse({ history: null })?.available !== false) {
+    throw new Error('dashboard malformed successful history response was converted to zero usage');
+  }
+  if (normalizeHistoryResponse(history) !== history.history) throw new Error('dashboard valid history response was rejected');
   for (const [fixture, expectedUsed, expectedRemaining] of [
     [{ remaining_percent: 97 }, 3, 97],
     [{ used_percent: 3 }, 3, 97],

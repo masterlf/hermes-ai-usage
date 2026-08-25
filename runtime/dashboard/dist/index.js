@@ -743,6 +743,13 @@
     return h("div", { className: "aum-error", role: "alert" }, props.t.historyUnavailable);
   }
 
+  function normalizeHistoryResponse(response) {
+    const history = response && response.history;
+    return history && typeof history === "object" && !Array.isArray(history)
+      ? history
+      : { available: false };
+  }
+
   function AIUsagePage() {
     const t = text();
     const state = React.useState({ loading: true, refreshing: false, error: false, account: null, history: null });
@@ -772,7 +779,7 @@
             refreshing: false,
             error: false,
             account: responses[0] && responses[0].account,
-            history: responses[1] && responses[1].history
+            history: normalizeHistoryResponse(responses[1])
           });
         })
         .catch(function () {

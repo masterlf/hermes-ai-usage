@@ -13,20 +13,25 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cannot be proven; All-profile session references are collision-safe across profiles.
 - SQLite VM-step budgets cover identity/collision scans, provider snapshots reject malformed
   or non-finite data, and concurrent cache misses are coalesced per profile/provider key.
-- Deterministic release archives, SHA-256 checksums, and a SHA-pinned least-privilege
-  provenance-attesting release workflow were added.
+- Deterministic release archives, SHA-256 checksums, and a SHA-pinned release workflow now
+  gate the exact tagged SHA on current `origin/main`, then separate unprivileged verification
+  and build from privileged provenance attestation and publication.
+- Provider single-flight owners now release the exact waiter event in `finally`, including
+  on `BaseException`, while waiters have a bounded unavailable fallback.
 
 ### Fixed
 
 - Desktop and Web distinguish unavailable/failed history from legitimate zero usage with a
   generic accessible alert and composite non-sensitive row keys.
+- Web treats malformed successful history responses as unavailable, and Desktop keeps the
+  initial loading state distinct from legitimate empty usage.
 - Quota threshold labels now assign 25/50/75 boundaries unambiguously and match exact CSS
   hard stops while retaining the four-color remaining track and consumption mask.
 
 ### Documentation
 
-- Installation now uses an exact checksummed release, respects `HERMES_HOME`, backs up,
-  verifies, and defines rollback. Dashboard trust is reconciled with official Hermes docs.
+- Installation now uses a checked-in safe exact-tree installer with canonical-path and
+  symlink validation, per-filesystem staging, distinct backups, and transactional rollback.
 
 ## [0.7.2] - 2026-08-25
 

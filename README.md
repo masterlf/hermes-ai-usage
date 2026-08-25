@@ -68,7 +68,8 @@ Key controls:
 
 - provider credentials remain inside Hermes adapters;
 - account snapshot cache is scoped by Hermes home/profile and provider;
-- per-key single-flight prevents duplicate concurrent provider snapshot fetches;
+- per-key single-flight prevents duplicate concurrent provider snapshot fetches and uses
+  bounded waiter liveness with cleanup even when an owner aborts;
 - SQLite URI `mode=ro` plus `PRAGMA query_only=ON`;
 - static parameterized SQL; no mutation statements;
 - response allowlisting and bounded display strings;
@@ -103,8 +104,10 @@ See [docs/INSTALLATION.md](docs/INSTALLATION.md) for complete installation,
 verification, upgrade, and removal instructions.
 
 Install only the exact `v0.7.3` release archive after verifying `SHA256SUMS` and its
-GitHub provenance attestation. The complete procedure is profile-aware, backs up existing
-files, verifies the copy, and defines rollback. This repository is not a native
+repo-and-workflow-scoped GitHub provenance attestation. The archive's checked-in Python
+installer requires an explicit canonical `HERMES_HOME`, atomically replaces exact Dashboard
+and Desktop trees, keeps distinct component backups, and rolls both back if either swap
+fails. Configuration edits remain separate. This repository is not a native
 `hermes plugins install` package.
 
 ## Development

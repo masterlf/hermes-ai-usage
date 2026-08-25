@@ -813,7 +813,9 @@ function UsagePage() {
   const sessionQuery = useSessionUsage()
   const historyQuery = useHistory(days, selectedBucket, scope)
   const refreshing = accountQuery.isFetching || sessionQuery.isFetching || historyQuery.isFetching
-  const historyUnavailable = historyQuery.error || historyQuery.data?.history?.available === false
+  const historyLoading = historyQuery.isLoading && !historyQuery.data
+  const history = historyQuery.data?.history
+  const historyUnavailable = historyQuery.error || (!historyLoading && (!history || history.available === false))
 
   return jsxs('main', {
     className: 'h-full overflow-auto p-5',
@@ -863,7 +865,8 @@ function UsagePage() {
         ]
       }),
       accountQuery.error ? jsx('p', { className: 'mb-3 text-sm text-(--ui-text-tertiary)', children: t('loadError') }) : null,
-      historyUnavailable ? jsx(HistoryUnavailable, { history: historyQuery.data?.history, error: historyQuery.error }) : null,
+      historyLoading ? jsx('p', { className: 'mb-3 text-sm text-(--ui-text-tertiary)', role: 'status', children: t('loading') }) : null,
+      historyUnavailable ? jsx(HistoryUnavailable, { history, error: historyQuery.error }) : null,
       historyQuery.data?.history?.partial ? jsx('p', { className: 'mb-3 text-sm text-(--ui-accent)', role: 'status', children: t('partialWarning') }) : null,
       jsxs('div', {
         className: 'grid gap-4 xl:grid-cols-2',
@@ -872,10 +875,10 @@ function UsagePage() {
           jsx(SessionCard, { usage: sessionQuery.data, sessionId: sessionQuery.sessionId })
         ]
       }),
-      !historyUnavailable ? jsx('div', {
+      !historyLoading && !historyUnavailable ? jsx('div', {
         className: 'mt-4',
         children: jsx(UsageChart, {
-          history: historyQuery.data?.history,
+          history,
           days,
           selectedBucket,
           onDays: value => {
@@ -885,13 +888,13 @@ function UsagePage() {
           onSelect: value => setSelectedBucket(current => current === value ? null : value)
         })
       }) : null,
-      !historyUnavailable && historyQuery.data?.history?.profiles?.length ? jsx('div', {
+      !historyLoading && !historyUnavailable && history?.profiles?.length ? jsx('div', {
         className: 'mt-4',
-        children: jsx(ProfileBreakdown, { history: historyQuery.data.history })
+        children: jsx(ProfileBreakdown, { history })
       }) : null,
-      !historyUnavailable ? jsx('div', {
+      !historyLoading && !historyUnavailable ? jsx('div', {
         className: 'mt-4',
-        children: jsx(HistoryCard, { history: historyQuery.data?.history, selectedBucket })
+        children: jsx(HistoryCard, { history, selectedBucket })
       }) : null,
       jsx('p', {
         className: 'mt-4 text-xs text-(--ui-text-quaternary)',
@@ -987,6 +990,7 @@ export default {
         workload_branch: 'Branch', workload_continuation: 'Continuation',
         refresh: 'Refresh',
         refreshing: 'Refreshing…',
+        loading: 'Loading usage data…',
         loadError: 'Usage data could not be loaded. Refresh or restart the Hermes backend.',
         chipTip: (remaining, tokens) => `${remaining} remaining · ${tokens} tokens in active session`,
         dataNote: 'Quota percentages come from the provider API when available. Token counts come from Hermes/provider responses. They are related, but they are not interchangeable.',
@@ -1072,6 +1076,7 @@ export default {
         workload_branch: 'Branche', workload_continuation: 'Continuation',
         refresh: 'Actualiser',
         refreshing: 'Actualisation…',
+        loading: 'Chargement de la consommation…',
         loadError: 'Les données de consommation n’ont pas pu être chargées. Actualise ou redémarre le backend Hermes.',
         chipTip: (remaining, tokens) => `${remaining} restants · ${tokens} tokens dans la session active`,
         dataNote: 'Les pourcentages viennent de l’API du fournisseur lorsqu’elle existe. Les tokens viennent de Hermes et des réponses du fournisseur. Les deux sont liés, mais ne sont pas interchangeables.',

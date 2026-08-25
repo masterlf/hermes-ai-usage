@@ -24,6 +24,7 @@ const useQuery = options => {
   if (key.includes('session')) return { data: { input: 1, output: 2, total: 3 }, refetch: () => {} };
   if (key.includes('history')) {
     globalThis.__historyOptions = options;
+    if (globalThis.__historyLoading) return { data: undefined, isLoading: true, isFetching: true, refetch: () => {} };
     return { data: { history: {
     totals: { input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170, api_calls: 3 },
     profile_scope: 'current',
@@ -58,7 +59,7 @@ const useEffect = () => {};
 const jsx = (type, props) => ({ type, props });
 const jsxs = jsx;
 ` + source.slice(bodyStart + 2);
-source = source.replace('export default {', 'globalThis.__compositionOf = compositionOf; globalThis.__quotaPercentages = quotaPercentages; globalThis.__Progress = Progress; globalThis.__AccountCard = AccountCard; globalThis.__ProfileBreakdown = ProfileBreakdown; globalThis.__UsageChart = UsageChart; globalThis.__HistoryUnavailable = HistoryUnavailable; globalThis.__plugin = {');
+source = source.replace('export default {', 'globalThis.__compositionOf = compositionOf; globalThis.__quotaPercentages = quotaPercentages; globalThis.__Progress = Progress; globalThis.__AccountCard = AccountCard; globalThis.__ProfileBreakdown = ProfileBreakdown; globalThis.__UsageChart = UsageChart; globalThis.__HistoryUnavailable = HistoryUnavailable; globalThis.__UsagePage = UsagePage; globalThis.__plugin = {');
 if (!source.includes('bucket_start=')) throw new Error('Desktop bucket-specific history request missing');
 if (!source.includes("scope === 'all'") || !source.includes('&scope=all')) throw new Error('Desktop all-profile request missing');
 if (!source.includes('ResizeObserver')) throw new Error('Desktop chart is not container-aware');
@@ -175,8 +176,14 @@ const HistoryUnavailable = sandbox.globalThis.__HistoryUnavailable;
 const unavailableHistory = resolveTree(HistoryUnavailable({ history: { available: false, reason: 'secret' }, error: null }));
 if (unavailableHistory.props.role !== 'alert' || !flatten(unavailableHistory).includes('Usage history is unavailable')) throw new Error('Desktop unavailable history is not an accessible generic alert');
 if (flatten(unavailableHistory).includes('secret')) throw new Error('Desktop unavailable history reflected a backend reason');
-if (!source.includes("historyQuery.error || historyQuery.data?.history?.available === false")) throw new Error('Desktop transport and unavailable history states are not unified');
+if (!source.includes("historyQuery.error || (!historyLoading && (!history || history.available === false))")) throw new Error('Desktop transport, malformed, and unavailable history states are not unified');
 if (!source.includes("`${row.profile || 'unknown'}:${row.session_ref ||")) throw new Error('Desktop history keys are not profile-composite');
+const UsagePage = sandbox.globalThis.__UsagePage;
+sandbox.globalThis.__historyLoading = true;
+const initialLoading = flatten(resolveTree(UsagePage()));
+sandbox.globalThis.__historyLoading = false;
+if (!initialLoading.includes('Loading usage data')) throw new Error('Desktop initial history loading state is not visible');
+if (initialLoading.includes('No recorded usage')) throw new Error('Desktop initial loading rendered no-usage copy');
 const ProfileBreakdown = sandbox.globalThis.__ProfileBreakdown;
 const sixProfiles = Array.from({ length: 6 }, (_, index) => ({ profile: 'profile-' + index, sessions: index, api_calls: index, input_tokens: index + 1 }));
 const profileFixture = resolveTree(ProfileBreakdown({ history: { profiles: sixProfiles } }));

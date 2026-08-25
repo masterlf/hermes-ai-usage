@@ -56,8 +56,13 @@ The plugin never pools such results under a shared fallback scope.
 - frontend bundles avoid raw HTML, eval, storage, direct fetch, cookies, and custom auth;
 - source and automation are covered by CI, static analysis, dependency audit, secret scan,
   CodeQL, dependency review, workflow analysis, and OpenSSF Scorecard.
-- release archives are deterministic, checksummed, and provenance-attested by a SHA-pinned,
-  least-privilege tag workflow.
+- release archives are deterministic under an identical runtime, checksummed, path-safe, and
+  built only after exact-tag/current-main checks and canonical security gates; privileged
+  provenance/publication receives only a checksum-revalidated GitHub artifact.
+- installation validates canonical containment and symlink-free destination paths, stages on
+  each destination filesystem, and rolls back both exact component swaps on failure.
+- provider single-flight cleanup releases waiters even on owner `BaseException`, and every
+  waiter has a bounded unavailable fallback.
 
 ## Open operational controls
 

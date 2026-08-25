@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,6 +31,18 @@ class ReleaseBuildTests(unittest.TestCase):
                 f"{digest}  {first.name}\n",
             )
             self.assertEqual(first_checksum.read_bytes(), second_checksum.read_bytes())
+
+            with tarfile.open(fileobj=io.BytesIO(first.read_bytes()), mode="r:gz") as archive:
+                members = archive.getmembers()
+                prefix = f"hermes-ai-usage-v{build_release.VERSION}/"
+                for member in members:
+                    self.assertTrue(member.name.startswith(prefix))
+                    relative = member.name.removeprefix(prefix)
+                    self.assertNotIn("..", Path(relative).parts)
+                    self.assertFalse(Path(relative).is_absolute())
+                    self.assertTrue(member.isfile())
+                    expected_mode = 0o755 if relative == "scripts/install_release.py" else 0o644
+                    self.assertEqual(member.mode, expected_mode)
 
 
 if __name__ == "__main__":

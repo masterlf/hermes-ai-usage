@@ -1,4 +1,5 @@
-# Security-sensitive project: all changes require maintainer review.
+# Ownership routing for a solo-maintainer project. Branch protection separately requires
+# automated checks and an independent review of each release candidate before promotion.
 * @masterlf
 /.github/ @masterlf
 /runtime/dashboard/plugin_api.py @masterlf

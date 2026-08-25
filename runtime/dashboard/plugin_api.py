@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_ACCOUNT_PROVIDERS = frozenset({"openai-codex", "anthropic", "openrouter"})
 _ACCOUNT_CACHE_TTL_SECONDS = 45.0
+_ACCOUNT_INFLIGHT_WAIT_SECONDS = 10.0
 _account_cache: dict[tuple[str, str], tuple[float, AccountUsageSnapshot | None]] = {}
 _account_cache_lock = threading.Lock()
 _account_inflight: dict[tuple[str, str], threading.Event] = {}
@@ -211,17 +212,22 @@ def _cached_account_snapshot(provider: str) -> AccountUsageSnapshot | None:
             owner = False
 
     if not owner:
-        pending.wait()
+        if not pending.wait(timeout=_ACCOUNT_INFLIGHT_WAIT_SECONDS):
+            logger.warning("Account quota request wait timed out; returning unavailable")
+            return None
         with _account_cache_lock:
             cached = _account_cache.get(cache_key)
             return cached[1] if cached else None
 
-    snapshot = _fetch_account_snapshot(provider)
-    with _account_cache_lock:
-        _account_cache[cache_key] = (now, snapshot)
-        _account_inflight.pop(cache_key, None)
-        pending.set()
-    return snapshot
+    try:
+        snapshot = _fetch_account_snapshot(provider)
+        with _account_cache_lock:
+            _account_cache[cache_key] = (now, snapshot)
+        return snapshot
+    finally:
+        with _account_cache_lock:
+            _account_inflight.pop(cache_key, None)
+            pending.set()
 
 
 def _serialize_account(snapshot: AccountUsageSnapshot | None, provider: str) -> dict[str, Any]:

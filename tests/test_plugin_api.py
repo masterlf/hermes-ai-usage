@@ -197,6 +197,47 @@ class SerializationTests(unittest.TestCase):
         self.assertEqual(calls, ["openai-codex"])
         self.assertEqual(len(results), 2)
 
+    def test_account_cache_base_exception_releases_waiter_and_allows_retry(self):
+        class OwnerAbort(BaseException):
+            pass
+
+        module._account_cache.clear()
+        module._account_inflight.clear()
+        events = []
+        real_event = threading.Event
+
+        def tracked_event():
+            event = real_event()
+            events.append(event)
+            return event
+
+        with (
+            mock.patch.object(module.threading, "Event", tracked_event),
+            mock.patch.object(module, "get_hermes_home", lambda: "/profiles/alpha"),
+            mock.patch.object(module, "_fetch_account_snapshot", side_effect=OwnerAbort()),
+            self.assertRaises(OwnerAbort),
+        ):
+            module._cached_account_snapshot("openai-codex")
+
+        self.assertEqual(module._account_inflight, {})
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0].is_set())
+
+        abandoned = real_event()
+        module._account_inflight[("/profiles/alpha", "openai-codex")] = abandoned
+        with (
+            mock.patch.object(module, "_ACCOUNT_INFLIGHT_WAIT_SECONDS", 0.01),
+            mock.patch.object(module, "get_hermes_home", lambda: "/profiles/alpha"),
+        ):
+            self.assertIsNone(module._cached_account_snapshot("openai-codex"))
+
+        module._account_inflight.clear()
+        with (
+            mock.patch.object(module, "get_hermes_home", lambda: "/profiles/alpha"),
+            mock.patch.object(module, "_fetch_account_snapshot", return_value=FakeSnapshot()),
+        ):
+            self.assertIsInstance(module._cached_account_snapshot("openai-codex"), FakeSnapshot)
+
 
 class HistoryTests(unittest.TestCase):
     @staticmethod

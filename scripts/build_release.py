@@ -18,6 +18,7 @@ FILES = (
     "README.md",
     "desktop/plugin.js",
     "docs/INSTALLATION.md",
+    "scripts/install_release.py",
     "runtime/dashboard/dist/index.js",
     "runtime/dashboard/dist/style.css",
     "runtime/dashboard/manifest.json",
@@ -40,7 +41,7 @@ def build(root: Path, output_dir: Path) -> tuple[Path, Path]:
             data = (root / relative).read_bytes()
             info = tarfile.TarInfo(f"hermes-ai-usage-v{VERSION}/{relative}")
             info.size = len(data)
-            info.mode = 0o644
+            info.mode = 0o755 if relative == "scripts/install_release.py" else 0o644
             info.mtime = 0
             info.uid = info.gid = 0
             info.uname = info.gname = "root"
