@@ -58,7 +58,7 @@ const useEffect = () => {};
 const jsx = (type, props) => ({ type, props });
 const jsxs = jsx;
 ` + source.slice(bodyStart + 2);
-source = source.replace('export default {', 'globalThis.__compositionOf = compositionOf; globalThis.__quotaPercentages = quotaPercentages; globalThis.__Progress = Progress; globalThis.__AccountCard = AccountCard; globalThis.__ProfileBreakdown = ProfileBreakdown; globalThis.__UsageChart = UsageChart; globalThis.__plugin = {');
+source = source.replace('export default {', 'globalThis.__compositionOf = compositionOf; globalThis.__quotaPercentages = quotaPercentages; globalThis.__Progress = Progress; globalThis.__AccountCard = AccountCard; globalThis.__ProfileBreakdown = ProfileBreakdown; globalThis.__UsageChart = UsageChart; globalThis.__HistoryUnavailable = HistoryUnavailable; globalThis.__plugin = {');
 if (!source.includes('bucket_start=')) throw new Error('Desktop bucket-specific history request missing');
 if (!source.includes("scope === 'all'") || !source.includes('&scope=all')) throw new Error('Desktop all-profile request missing');
 if (!source.includes('ResizeObserver')) throw new Error('Desktop chart is not container-aware');
@@ -156,7 +156,7 @@ for (const remaining of [0, 20, 40, 60, 80, 97, 100]) {
   if (!gradient || gradient.props.style.width !== '100%') throw new Error('Desktop quota gradient is not fixed to the full track');
   if (!mask || mask.props.style.left !== remaining + '%' || mask.props.style.width !== (100 - remaining) + '%') throw new Error('Desktop quota mask geometry is incorrect: ' + remaining);
 }
-const desktopQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%)';
+const desktopQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 25%, #ff9f43 25%, #ff9f43 50%, #f6d860 50%, #f6d860 75%, #4ade80 75%, #4ade80 100%)';
 if (!source.includes(desktopQuotaGradient)) throw new Error('Desktop fixed quota gradient stops are missing or reordered');
 if (String(Progress).includes('bg-(--ui-accent)') || String(Progress).includes('bg-(--ui-danger)')) throw new Error('Desktop quota gradient regressed to a host semantic fill');
 for (const color of ['#ff5c5c', '#ff9f43', '#f6d860', '#4ade80']) {
@@ -168,9 +168,15 @@ for (const color of ['#ff5c5c', '#ff9f43', '#f6d860', '#4ade80']) {
 const AccountCard = sandbox.globalThis.__AccountCard;
 const directRemainingCard = resolveTree(AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: 97, used_percent: 80, reset_at: '2026-07-29T01:07:13Z' }] } }));
 if (!flatten(directRemainingCard).includes('3% used') || !flatten(directRemainingCard).includes('Resets')) throw new Error('Desktop quota footer did not retain used/reset details');
-for (const label of ['Critical 0–25%', 'Low 25–50%', 'Moderate 50–75%', 'Healthy 75–100%']) {
+for (const label of ['Critical 0–<25%', 'Low 25–<50%', 'Moderate 50–<75%', 'Healthy 75–100%']) {
   if (!flatten(directRemainingCard).includes(label)) throw new Error('Desktop visible quota scale label missing: ' + label);
 }
+const HistoryUnavailable = sandbox.globalThis.__HistoryUnavailable;
+const unavailableHistory = resolveTree(HistoryUnavailable({ history: { available: false, reason: 'secret' }, error: null }));
+if (unavailableHistory.props.role !== 'alert' || !flatten(unavailableHistory).includes('Usage history is unavailable')) throw new Error('Desktop unavailable history is not an accessible generic alert');
+if (flatten(unavailableHistory).includes('secret')) throw new Error('Desktop unavailable history reflected a backend reason');
+if (!source.includes("historyQuery.error || historyQuery.data?.history?.available === false")) throw new Error('Desktop transport and unavailable history states are not unified');
+if (!source.includes("`${row.profile || 'unknown'}:${row.session_ref ||")) throw new Error('Desktop history keys are not profile-composite');
 const ProfileBreakdown = sandbox.globalThis.__ProfileBreakdown;
 const sixProfiles = Array.from({ length: 6 }, (_, index) => ({ profile: 'profile-' + index, sessions: index, api_calls: index, input_tokens: index + 1 }));
 const profileFixture = resolveTree(ProfileBreakdown({ history: { profiles: sixProfiles } }));
@@ -242,7 +248,7 @@ if (restCalls[restCalls.length - 1].includes('scope=all')) throw new Error('Desk
 sandbox.globalThis.__setHarnessStateful(false);
 const tree = resolveTree(page.render());
 const rendered = flatten(tree);
-if (!rendered.includes('v0.7.2')) throw new Error('Desktop visible plugin version missing');
+if (!rendered.includes('v0.7.3')) throw new Error('Desktop visible plugin version missing');
 const renderedOrder = ['Token usage', 'Usage by profile', 'Recent usage'].map(label => rendered.indexOf(label));
 if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('Desktop chart/profile/recent order is incorrect: ' + renderedOrder);
 if (!rendered.includes('Token usage')) throw new Error('Desktop usage chart missing: ' + rendered);

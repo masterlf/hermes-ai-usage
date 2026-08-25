@@ -170,13 +170,13 @@ function contrastRatio(foreground, background) {
   const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
   const manifest = JSON.parse(fs.readFileSync('runtime/dashboard/manifest.json', 'utf8'));
   const readme = fs.readFileSync('README.md', 'utf8');
-  if (manifest.version !== '0.7.2') throw new Error('dashboard manifest version is not 0.7.2');
-  if (!readme.includes('Current plugin version: **v0.7.2**')) throw new Error('README does not identify v0.7.2');
+  if (manifest.version !== '0.7.3') throw new Error('dashboard manifest version is not 0.7.3');
+  if (!readme.includes('Current plugin version: **v0.7.3**')) throw new Error('README does not identify v0.7.3');
   if (!readme.includes('non_cache_read_tokens = input_tokens + output_tokens + cache_write_tokens')) throw new Error('README does not document the neutral metric formula');
   if (!readme.includes('Desktop and Web Dashboard initially request `scope=all`')) throw new Error('README does not document the client scope default');
   const instrumentedSource = dashboardSource.replace(
     'registry.register("ai-usage-monitor", AIUsagePage);',
-    'window.__compositionOf = compositionOf; window.__quotaPercentages = quotaPercentages; window.__AccountCard = AccountCard; window.__ProfileBreakdown = ProfileBreakdown; window.__UsageChart = UsageChart; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
+    'window.__compositionOf = compositionOf; window.__quotaPercentages = quotaPercentages; window.__AccountCard = AccountCard; window.__ProfileBreakdown = ProfileBreakdown; window.__UsageChart = UsageChart; window.__HistoryUnavailable = HistoryUnavailable; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
   );
   vm.runInNewContext(instrumentedSource, sandbox);
   const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
@@ -213,7 +213,7 @@ function contrastRatio(foreground, background) {
   }
   const directRemainingTree = AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: 97, used_percent: 80, reset_at: '2026-07-29T01:07:13Z' }] }, t: textForTest() });
   if (!flatten(directRemainingTree).includes('3% utilisés') || !flatten(directRemainingTree).includes('Réinitialisation')) throw new Error('dashboard quota footer did not retain used/reset details');
-  for (const label of ['Critique 0–25 %', 'Faible 25–50 %', 'Modéré 50–75 %', 'Sain 75–100 %']) {
+  for (const label of ['Critique 0–<25 %', 'Faible 25–<50 %', 'Modéré 50–<75 %', 'Sain 75–100 %']) {
     if (!flatten(directRemainingTree).includes(label)) throw new Error('dashboard visible quota scale label missing: ' + label);
   }
   const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
@@ -251,10 +251,15 @@ function contrastRatio(foreground, background) {
   if (!/@media\s*\(forced-colors:\s*active\)/.test(dashboardStyles)) throw new Error('dashboard forced-colors support missing');
   const quotaScaleRule = dashboardStyles.match(/\.aum-progress-scale\s*\{([^}]*)\}/);
   const quotaMaskRule = dashboardStyles.match(/\.aum-progress-mask\s*\{([^}]*)\}/);
-  const fixedQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%)';
+  const fixedQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 25%, #ff9f43 25%, #ff9f43 50%, #f6d860 50%, #f6d860 75%, #4ade80 75%, #4ade80 100%)';
   if (!quotaScaleRule || !quotaScaleRule[1].includes(fixedQuotaGradient)) throw new Error('dashboard fixed quota gradient stops are missing or reordered');
   if (quotaScaleRule[1].includes('var(--color-primary)')) throw new Error('dashboard quota gradient regressed to host primary');
   if (!quotaMaskRule || !quotaMaskRule[1].includes('background: color-mix(in srgb, var(--color-muted) 60%, transparent)')) throw new Error('dashboard consumed mask does not restore the track color');
+  const unavailableHistory = sandbox.window.__HistoryUnavailable({ history: { available: false, reason: 'secret' }, error: false, t: textForTest() });
+  if (unavailableHistory.props.role !== 'alert' || !flatten(unavailableHistory).includes('Historique indisponible')) throw new Error('dashboard unavailable history is not an accessible generic alert');
+  if (flatten(unavailableHistory).includes('secret')) throw new Error('dashboard unavailable history reflected a backend reason');
+  if (!dashboardSource.includes('data.error || data.history && data.history.available === false')) throw new Error('dashboard transport and unavailable history states are not unified');
+  if (!dashboardSource.includes('(row.profile || "unknown") + ":" + (row.session_ref ||')) throw new Error('dashboard history keys are not profile-composite');
   for (const color of ['#ff5c5c', '#ff9f43', '#f6d860', '#4ade80']) {
     if (contrastRatio(color, '#041c1c') < 3) throw new Error('dashboard quota stop contrast is below 3:1: ' + color);
   }
@@ -291,7 +296,7 @@ function contrastRatio(foreground, background) {
   const initialHistoryCall = calls.find(path => path.includes('/history?'));
   if (!initialHistoryCall || !initialHistoryCall.includes('scope=all')) throw new Error('dashboard initial request is not all-profile: ' + calls.join(', '));
   const rendered = flatten(render());
-  if (!rendered.includes('v0.7.2')) throw new Error('dashboard visible plugin version missing');
+  if (!rendered.includes('v0.7.3')) throw new Error('dashboard visible plugin version missing');
   const renderedOrder = ['Utilisation des tokens', 'Consommation par profil', 'Sessions récentes'].map(label => rendered.indexOf(label));
   if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('dashboard chart/profile/recent order is incorrect: ' + renderedOrder);
   if (!rendered.includes('35% restants')) throw new Error('provider quota fallback was not rendered');

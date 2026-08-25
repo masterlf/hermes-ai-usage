@@ -19,6 +19,11 @@ body:
       label: Hermes Agent version
     validations:
       required: true
+  - type: input
+    id: hermes_commit
+    attributes:
+      label: Hermes Agent commit (if known)
+      description: Use the commit identifier only; do not paste configuration or logs.
   - type: dropdown
     id: surface
     attributes:
@@ -57,4 +62,6 @@ body:
         - label: I removed credentials, prompts, transcripts, cookies, databases, and local configuration.
           required: true
         - label: This is not a vulnerability report.
+          required: true
+        - label: I understand the Web Dashboard is a trusted machine-operator surface, not a low-privilege per-profile boundary.
           required: true

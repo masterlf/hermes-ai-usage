@@ -16,8 +16,10 @@ receives an `AccountUsageSnapshot`. Credentials never enter plugin state or resp
 The backend:
 
 - resolves the active provider from profile-aware Hermes configuration;
-- caches quota snapshots for 45 seconds using `(Hermes home, provider)` as the key;
-- serializes a bounded allowlist of quota fields;
+- caches quota snapshots for 45 seconds using `(Hermes home, provider)` as the key and
+  coalesces concurrent misses with per-key single-flight;
+- serializes a bounded allowlist of quota fields and windows, rejecting non-finite or
+  malformed snapshots as unavailable;
 - preserves active-profile reads by default and adds an explicit `scope=all` aggregation;
 - discovers only the canonical default home and direct strict-slug named profile homes,
   rejecting symlinked/non-regular databases, canonical path escapes, and duplicate physical
@@ -35,8 +37,8 @@ The backend:
   workload enums and validated duration/active state; all-profile identity comes only from
   the validated database home, never the stored `profile_name` value;
 - never selects session titles, paths, prompts, chat identifiers, or raw lineage values;
-- derives a collision-aware session suffix and removes the complete identifier before
-  serialization;
+- derives globally collision-safe session suffixes across every healthy profile before
+  complete identifiers are discarded, and uses profile-composite React keys;
 - transiently compares a bounded set of full session IDs across databases; if an ID occurs
   in more than one physical database, every affected database is excluded and reported as
   partial because profile ownership cannot be proven;
@@ -82,5 +84,8 @@ default + named profile state.db -- explicit scope=all aggregate --^
    returned strings are bounded and React-escaped.
 4. Explicit All-profiles access expands the read boundary to every eligible local profile;
    partial failures are sanitized and healthy data is retained without claiming complete totals.
-5. Hermes authentication/profile middleware is an upstream control. Running the router
-   as a standalone unauthenticated API is unsupported.
+5. Hermes authentication is an upstream control. The official Dashboard is a machine-level
+   management surface for all local profiles; authenticated principals are trusted machine
+   operators, not low-privilege per-profile users. Distinct exposure requires separate auth
+   and `--isolated` servers. Running the router standalone is unsupported. See
+   https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard.

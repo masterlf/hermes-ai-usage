@@ -5,6 +5,7 @@ import json
 import sqlite3
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from datetime import UTC, datetime
@@ -72,6 +73,29 @@ class SerializationTests(unittest.TestCase):
         self.assertEqual(payload["windows"][1]["used_percent"], 100.0)
         self.assertEqual(payload["windows"][1]["remaining_percent"], 0.0)
 
+    def test_serialization_rejects_nonfinite_values_and_bounds_windows(self):
+        snapshot = FakeSnapshot()
+        snapshot.windows = tuple(
+            FakeWindow(f"Window {index}", float("nan") if index == 0 else index)
+            for index in range(20)
+        )
+
+        payload = module._serialize_account(snapshot, "openai-codex")
+
+        self.assertEqual(len(payload["windows"]), 8)
+        self.assertIsNone(payload["windows"][0]["used_percent"])
+        self.assertIsNone(payload["windows"][0]["remaining_percent"])
+
+    def test_malformed_snapshot_serialization_fails_unavailable(self):
+        snapshot = FakeSnapshot()
+        snapshot.fetched_at = object()
+
+        payload = module._serialize_account(snapshot, "openai-codex")
+
+        self.assertFalse(payload["available"])
+        self.assertEqual(payload["windows"], [])
+        self.assertEqual(payload["reason"], "The provider snapshot was unavailable.")
+
     def test_display_text_removes_unicode_format_controls(self):
         text = module._safe_text("safe\u202esecret\u200b label")
         self.assertEqual(text, "safe secret label")
@@ -136,6 +160,42 @@ class SerializationTests(unittest.TestCase):
 
         self.assertEqual(calls, ["openai-codex", "openai-codex"])
         self.assertEqual(module._account_cache, {})
+
+    def test_account_cache_single_flight_fetches_once_per_key(self):
+        module._account_cache.clear()
+        module._account_inflight.clear()
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def fetch(provider):
+            calls.append(provider)
+            entered.set()
+            release.wait(timeout=2)
+            return FakeSnapshot()
+
+        results = []
+        with (
+            mock.patch.object(module, "fetch_account_usage", fetch),
+            mock.patch.object(module, "get_hermes_home", lambda: "/profiles/alpha"),
+        ):
+            first = threading.Thread(
+                target=lambda: results.append(module._cached_account_snapshot("openai-codex"))
+            )
+            second = threading.Thread(
+                target=lambda: results.append(module._cached_account_snapshot("openai-codex"))
+            )
+            first.start()
+            self.assertTrue(entered.wait(timeout=1))
+            second.start()
+            release.set()
+            first.join(timeout=2)
+            second.join(timeout=2)
+
+        module._account_cache.clear()
+        module._account_inflight.clear()
+        self.assertEqual(calls, ["openai-codex"])
+        self.assertEqual(len(results), 2)
 
 
 class HistoryTests(unittest.TestCase):
@@ -714,17 +774,60 @@ class HistoryTests(unittest.TestCase):
             )
             database.commit()
             database.close()
+            opens = []
+            real_connection = module._readonly_connection
+
+            def track_connection(path):
+                opens.append(path)
+                return real_connection(path)
+
             with (
                 mock.patch.object(module, "get_default_hermes_root", lambda: root),
                 mock.patch.object(module, "get_hermes_home", lambda: outside),
                 mock.patch.object(module.time, "time", return_value=1100),
+                mock.patch.object(module, "_readonly_connection", track_connection),
             ):
                 payload = module._current_profile_history(7, 30)
 
         self.assertEqual(payload["profile_scope"], "current")
+        self.assertFalse(payload["available"])
+        self.assertEqual(payload["reason"], "Hermes token history could not be read.")
+        self.assertEqual(opens, [])
         self.assertNotIn("profiles", payload)
-        self.assertIsNone(payload["rows"][0]["profile"])
         self.assertNotIn("trusted-looking", json.dumps(payload))
+
+    def test_all_profile_session_refs_are_globally_collision_safe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            alpha = root / "profiles" / "alpha"
+            alpha.mkdir(parents=True)
+            self._create_state_db(root)
+            self._create_state_db(alpha)
+            for home, session_id in (
+                (root, "default_AAAAsame12345678"),
+                (alpha, "alpha_BBBBBsame12345678"),
+            ):
+                database = sqlite3.connect(home / "state.db")
+                database.execute(
+                    """INSERT INTO sessions VALUES (
+                        ?, 'cli', 'gpt-test', 'openai-codex', 1000, 1010,
+                        1, 0, 0, 0, 0, 1, NULL, 0.0, 'estimated'
+                    )""",
+                    (session_id,),
+                )
+                database.commit()
+                database.close()
+
+            with (
+                mock.patch.object(module, "get_default_hermes_root", lambda: root),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                payload = module._all_profiles_history(7, 30)
+
+        refs = [row["session_ref"] for row in payload["rows"]]
+        self.assertEqual(len(refs), 2)
+        self.assertEqual(len(set(refs)), 2)
+        self.assertTrue(all(len(reference) >= 16 for reference in refs))
 
     def test_connection_rejects_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1005,6 +1108,30 @@ class HistoryTests(unittest.TestCase):
             payload["profile_failures"],
             [{"profile": "default", "code": "session_identity_scan_truncated"}],
         )
+
+    def test_session_identity_scan_is_interrupted_by_vm_step_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._create_state_db(root)
+            database = sqlite3.connect(root / "state.db")
+            database.executemany(
+                """INSERT INTO sessions VALUES (
+                    ?, 'cli', 'gpt-test', 'openai-codex', 1000, 1010,
+                    1, 0, 0, 0, 0, 1, NULL, 0.0, 'estimated'
+                )""",
+                [(f"budget_{index:05d}_session_12345678",) for index in range(500)],
+            )
+            database.commit()
+            database.close()
+
+            with (
+                mock.patch.object(module, "_SQL_PROGRESS_STEPS", 1_000),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                identities, failure = module._session_identities(root / "state.db", 7)
+
+        self.assertIsNone(identities)
+        self.assertEqual(failure, "database_unavailable")
 
     def test_all_profiles_merge_is_globally_bounded_and_deterministic(self):
         with tempfile.TemporaryDirectory() as tmp:

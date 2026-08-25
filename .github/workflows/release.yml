@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, attest, and publish release
+    if: github.repository == 'masterlf/hermes-ai-usage'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # Create the GitHub release and upload its files.
+      id-token: write # Obtain the OIDC identity used for provenance signing.
+      attestations: write # Publish build provenance for the checksummed artifact.
+    steps:
+      - name: Check out immutable tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require tag to match manifest
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test "$RELEASE_TAG" = "v$(python -c 'import json; print(json.load(open("runtime/dashboard/manifest.json"))["version"])')"
+
+      - name: Build deterministic release files
+        run: python scripts/build_release.py
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@5c2d257b479ffc3f49957b4f6629eac7c2f8107e # v3.2.0
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Publish release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes

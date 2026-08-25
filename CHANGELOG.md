@@ -5,6 +5,29 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-08-25
+
+### Security
+
+- Current-profile history now fails closed before SQLite open when canonical profile identity
+  cannot be proven; All-profile session references are collision-safe across profiles.
+- SQLite VM-step budgets cover identity/collision scans, provider snapshots reject malformed
+  or non-finite data, and concurrent cache misses are coalesced per profile/provider key.
+- Deterministic release archives, SHA-256 checksums, and a SHA-pinned least-privilege
+  provenance-attesting release workflow were added.
+
+### Fixed
+
+- Desktop and Web distinguish unavailable/failed history from legitimate zero usage with a
+  generic accessible alert and composite non-sensitive row keys.
+- Quota threshold labels now assign 25/50/75 boundaries unambiguously and match exact CSS
+  hard stops while retaining the four-color remaining track and consumption mask.
+
+### Documentation
+
+- Installation now uses an exact checksummed release, respects `HERMES_HOME`, backs up,
+  verifies, and defines rollback. Dashboard trust is reconciled with official Hermes docs.
+
 ## [0.7.2] - 2026-08-25
 
 ### Fixed
@@ -147,7 +170,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only provider-quota snapshots and seven-day token history.
 - French and English UI text.
 
-[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.3
 [0.7.2]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.2
 [0.7.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.1
 [0.7.0]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.0

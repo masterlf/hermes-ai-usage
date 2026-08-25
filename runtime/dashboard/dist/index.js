@@ -7,7 +7,7 @@
 
   const React = SDK.React;
   const h = React.createElement;
-  const VERSION = "v0.7.2";
+  const VERSION = "v0.7.3";
   let chartInstance = 0;
 
   function api(path) {
@@ -38,9 +38,9 @@
         used: "utilisés",
         reset: "Réinitialisation",
         quotaScale: "Échelle du quota restant",
-        quotaCritical: "Critique 0–25 %",
-        quotaLow: "Faible 25–50 %",
-        quotaModerate: "Modéré 50–75 %",
+        quotaCritical: "Critique 0–<25 %",
+        quotaLow: "Faible 25–<50 %",
+        quotaModerate: "Modéré 50–<75 %",
         quotaHealthy: "Sain 75–100 %",
         stats: function (days) { return "Activité Hermes · " + (days === 1 ? "24 heures" : days + " jours"); },
         sessions: "Sessions",
@@ -93,6 +93,7 @@
         empty: "Aucune consommation enregistrée sur cette période.",
         loading: "Chargement de la consommation…",
         error: "Impossible de charger les données de consommation. Réessaie dans quelques secondes.",
+        historyUnavailable: "Historique indisponible. Réessaie dans quelques secondes.",
         codex: "Ce pourcentage représente le quota Codex rattaché à l’abonnement ChatGPT, pas un compteur universel de toutes les conversations ChatGPT.",
         source: "Les pourcentages viennent du fournisseur lorsqu’il les expose. Les tokens sont les compteurs enregistrés par Hermes ; ils ne se convertissent pas directement en pourcentage d’abonnement."
       };
@@ -118,9 +119,9 @@
       used: "used",
       reset: "Resets",
       quotaScale: "Remaining allowance scale",
-      quotaCritical: "Critical 0–25%",
-      quotaLow: "Low 25–50%",
-      quotaModerate: "Moderate 50–75%",
+      quotaCritical: "Critical 0–<25%",
+      quotaLow: "Low 25–<50%",
+      quotaModerate: "Moderate 50–<75%",
       quotaHealthy: "Healthy 75–100%",
       stats: function (days) { return "Hermes activity · " + (days === 1 ? "24 hours" : days + " days"); },
       sessions: "Sessions",
@@ -173,6 +174,7 @@
       empty: "No usage was recorded in this period.",
       loading: "Loading usage data…",
       error: "Usage data could not be loaded. Try again in a few seconds.",
+      historyUnavailable: "Usage history is unavailable. Try again in a few seconds.",
       codex: "This percentage is the Codex allowance attached to the ChatGPT subscription, not a universal meter for all ChatGPT conversations.",
       source: "Percentages come from the provider when exposed. Tokens are counters recorded by Hermes; they do not convert directly into a subscription percentage."
     };
@@ -712,7 +714,7 @@
               + " · " + t.outputLegend + " " + compact(composition.output)
               + " · " + t.cacheWriteLegend + " " + compact(composition.cacheWrite)
               + (row.reasoning_tokens ? " · " + t.reasoningLegend + " " + compact(row.reasoning_tokens) : "");
-            return h("tr", { key: row.session_ref || (row.ended_at || row.started_at || "session") + "-" + index },
+            return h("tr", { key: (row.profile || "unknown") + ":" + (row.session_ref || (row.ended_at || row.started_at || "session") + "-" + index) },
               h("td", { "data-label": t.date }, formatDate(row.ended_at || row.started_at), h("small", { className: "aum-duration" }, formatDuration(row.duration_seconds, row.is_active, t))),
               h("td", { className: "aum-muted", "data-label": t.profile }, row.profile || "—"),
               h("td", { className: "aum-muted", "data-label": t.workload }, workloadLabel(row, t)),
@@ -734,6 +736,11 @@
         )
       ) : h("div", { className: "aum-empty" }, t.empty)
     );
+  }
+
+  function HistoryUnavailable(props) {
+    if (!props.error && (!props.history || props.history.available !== false)) return null;
+    return h("div", { className: "aum-error", role: "alert" }, props.t.historyUnavailable);
   }
 
   function AIUsagePage() {
@@ -789,6 +796,7 @@
 
     const binding = bindingWindow(data.account);
     const bindingQuota = quotaPercentages(binding);
+    const historyUnavailable = data.error || data.history && data.history.available === false;
     return h("div", { className: "aum-page" },
       h("header", { className: "aum-hero" },
         h("div", null,
@@ -819,13 +827,13 @@
           }, data.refreshing ? t.refreshing : t.refresh)
         )
       ),
-      data.error ? h("div", { className: "aum-error", role: "alert" }, t.error) : null,
+      historyUnavailable ? h(HistoryUnavailable, { history: data.history, error: data.error, t: t }) : null,
       data.history && data.history.partial ? h("div", { className: "aum-warning", role: "status" }, t.partialWarning) : null,
       h("div", { className: "aum-grid" },
         h(AccountCard, { account: data.account, t: t }),
-        h(StatsCard, { history: data.history, t: t, days: days })
+        !historyUnavailable ? h(StatsCard, { history: data.history, t: t, days: days }) : null
       ),
-      h(UsageChart, {
+      !historyUnavailable ? h(UsageChart, {
         history: data.history,
         t: t,
         days: days,
@@ -837,9 +845,9 @@
         onSelect: function (value) {
           setSelectedBucket(function (current) { return current === value ? null : value; });
         }
-      }),
-      h(ProfileBreakdown, { history: data.history, t: t }),
-      h(HistoryTable, { history: data.history, t: t, selectedBucket: selectedBucket }),
+      }) : null,
+      !historyUnavailable ? h(ProfileBreakdown, { history: data.history, t: t }) : null,
+      !historyUnavailable ? h(HistoryTable, { history: data.history, t: t, selectedBucket: selectedBucket }) : null,
       h("p", { className: "aum-source-note" }, t.source)
     );
   }

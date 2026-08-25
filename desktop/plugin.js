@@ -15,7 +15,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'ai-usage-monitor'
 const ROUTE = '/ai-usage'
-const VERSION = 'v0.7.2'
+const VERSION = 'v0.7.3'
 let pluginContext = null
 let chartInstance = 0
 
@@ -230,7 +230,7 @@ function Progress({ quotaWindow }) {
         'data-quota-gradient': 'fixed-scale',
         style: {
           width: '100%',
-          background: 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%)'
+          background: 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 25%, #ff9f43 25%, #ff9f43 50%, #f6d860 50%, #f6d860 75%, #4ade80 75%, #4ade80 100%)'
         }
       }),
       jsx('div', {
@@ -784,13 +784,23 @@ function HistoryCard({ history, selectedBucket }) {
                   }),
                   jsxs('span', { children: [mobileLabel(t('logsRef')), jsx('code', { className: 'select-all text-(--ui-text-secondary)', children: row.session_ref || '—' })] })
                 ],
-                key: row.session_ref || `${row.ended_at || row.started_at || 'session'}-${index}`
+                key: `${row.profile || 'unknown'}:${row.session_ref || `${row.ended_at || row.started_at || 'session'}-${index}`}`
               })
             })
           ]
         })
       }) : jsx('p', { className: 'mt-3 text-sm text-(--ui-text-tertiary)', children: t('noHistory') })
     ]
+  })
+}
+
+function HistoryUnavailable({ history, error }) {
+  const t = usePluginI18n(ID)
+  if (!error && history?.available !== false) return null
+  return jsx('p', {
+    className: 'rounded-md border border-(--ui-danger) p-3 text-sm text-(--ui-text-primary)',
+    role: 'alert',
+    children: t('historyUnavailable')
   })
 }
 
@@ -803,6 +813,7 @@ function UsagePage() {
   const sessionQuery = useSessionUsage()
   const historyQuery = useHistory(days, selectedBucket, scope)
   const refreshing = accountQuery.isFetching || sessionQuery.isFetching || historyQuery.isFetching
+  const historyUnavailable = historyQuery.error || historyQuery.data?.history?.available === false
 
   return jsxs('main', {
     className: 'h-full overflow-auto p-5',
@@ -852,6 +863,7 @@ function UsagePage() {
         ]
       }),
       accountQuery.error ? jsx('p', { className: 'mb-3 text-sm text-(--ui-text-tertiary)', children: t('loadError') }) : null,
+      historyUnavailable ? jsx(HistoryUnavailable, { history: historyQuery.data?.history, error: historyQuery.error }) : null,
       historyQuery.data?.history?.partial ? jsx('p', { className: 'mb-3 text-sm text-(--ui-accent)', role: 'status', children: t('partialWarning') }) : null,
       jsxs('div', {
         className: 'grid gap-4 xl:grid-cols-2',
@@ -860,7 +872,7 @@ function UsagePage() {
           jsx(SessionCard, { usage: sessionQuery.data, sessionId: sessionQuery.sessionId })
         ]
       }),
-      jsx('div', {
+      !historyUnavailable ? jsx('div', {
         className: 'mt-4',
         children: jsx(UsageChart, {
           history: historyQuery.data?.history,
@@ -872,15 +884,15 @@ function UsagePage() {
           },
           onSelect: value => setSelectedBucket(current => current === value ? null : value)
         })
-      }),
-      historyQuery.data?.history?.profiles?.length ? jsx('div', {
+      }) : null,
+      !historyUnavailable && historyQuery.data?.history?.profiles?.length ? jsx('div', {
         className: 'mt-4',
         children: jsx(ProfileBreakdown, { history: historyQuery.data.history })
       }) : null,
-      jsx('div', {
+      !historyUnavailable ? jsx('div', {
         className: 'mt-4',
         children: jsx(HistoryCard, { history: historyQuery.data?.history, selectedBucket })
-      }),
+      }) : null,
       jsx('p', {
         className: 'mt-4 text-xs text-(--ui-text-quaternary)',
         children: t('dataNote')
@@ -931,9 +943,9 @@ export default {
         remaining: value => `${value}% remaining`,
         remainingWord: 'remaining',
         quotaScale: 'Remaining allowance scale',
-        quotaCritical: 'Critical 0–25%',
-        quotaLow: 'Low 25–50%',
-        quotaModerate: 'Moderate 50–75%',
+        quotaCritical: 'Critical 0–<25%',
+        quotaLow: 'Low 25–<50%',
+        quotaModerate: 'Moderate 50–<75%',
         quotaHealthy: 'Healthy 75–100%',
         used: value => `${value}% used`,
         usedWord: 'used',
@@ -954,6 +966,7 @@ export default {
         context: 'Current context',
         noActiveSession: 'No active session',
         noHistory: 'No recorded usage in this period.',
+        historyUnavailable: 'Usage history is unavailable. Refresh or restart the Hermes backend.',
         when: 'When',
         workload: 'Workload',
         modelProvider: 'Model · provider',
@@ -1015,9 +1028,9 @@ export default {
         remaining: value => `${value} % restants`,
         remainingWord: 'restants',
         quotaScale: 'Échelle du quota restant',
-        quotaCritical: 'Critique 0–25 %',
-        quotaLow: 'Faible 25–50 %',
-        quotaModerate: 'Modéré 50–75 %',
+        quotaCritical: 'Critique 0–<25 %',
+        quotaLow: 'Faible 25–<50 %',
+        quotaModerate: 'Modéré 50–<75 %',
         quotaHealthy: 'Sain 75–100 %',
         used: value => `${value} % utilisés`,
         usedWord: 'utilisés',
@@ -1038,6 +1051,7 @@ export default {
         context: 'Contexte actuel',
         noActiveSession: 'Aucune session active',
         noHistory: 'Aucune consommation enregistrée sur cette période.',
+        historyUnavailable: 'Historique indisponible. Actualise ou redémarre le backend Hermes.',
         when: 'Date',
         workload: 'Charge',
         modelProvider: 'Modèle · fournisseur',

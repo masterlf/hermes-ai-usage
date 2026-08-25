@@ -1,17 +1,17 @@
 # Security Assessment
 
-Assessment date: 2026-08-02
+Assessment date: 2026-08-25
 
 ## Executive summary
 
-The reviewed 0.4 codebase has a deliberately narrow read-only design and no plugin
+The reviewed 0.7.3 candidate has a deliberately narrow read-only design and no plugin
 runtime dependencies. No credential, prompt-content, SQL-injection, DOM-XSS, or state
 mutation path was identified after hardening. Automated controls cannot prove absence
 of vulnerabilities; changes touching trust boundaries require human review.
 
-Version 0.4 additionally replaces arbitrary session source display with exact enums,
-derives lineage categories without serializing marker values, validates profile slugs and
-durations, and tolerates older schemas with fail-closed optional-field fallbacks.
+Version 0.7.3 additionally fails closed before SQLite open when current-profile identity is
+unprovable, makes All-profile references globally collision-safe, bounds provider snapshots,
+coalesces concurrent quota fetches, and renders unavailable history distinctly from zero.
 
 ## Findings remediated before public release
 
@@ -56,8 +56,11 @@ The plugin never pools such results under a shared fallback scope.
 - frontend bundles avoid raw HTML, eval, storage, direct fetch, cookies, and custom auth;
 - source and automation are covered by CI, static analysis, dependency audit, secret scan,
   CodeQL, dependency review, workflow analysis, and OpenSSF Scorecard.
+- release archives are deterministic, checksummed, and provenance-attested by a SHA-pinned,
+  least-privilege tag workflow.
 
 ## Open operational controls
 
 Hermes authentication, TLS/network exposure, security headers, OS hardening, log access,
-and backups are owned by the host deployment and cannot be enforced by this plugin.
+and backups are owned by the host deployment and cannot be enforced by this plugin. Official
+Hermes docs define the Dashboard as machine-level; shared low-privilege access is unsupported.
