@@ -2,5 +2,5 @@
 # automated checks and an independent review of each release candidate before promotion.
 * @masterlf
 /.github/ @masterlf
-/runtime/dashboard/plugin_api.py @masterlf
+/dashboard/plugin_api.py @masterlf
 /scripts/security_invariants.py @masterlf

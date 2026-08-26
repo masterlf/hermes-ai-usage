@@ -6,6 +6,10 @@ This release targets the official unified Hermes plugin layout documented and im
 the installed Hermes source baseline. The canonical runtime ID and install directory are both
 `ai-usage-monitor`.
 
+Merging or publishing v0.7.4 distributes artifacts only; neither action deploys, restarts,
+upgrades, or changes any Hermes installation. Installation or migration remains a separate,
+explicit operator action.
+
 ## Primary install path
 
 Select the intended Hermes profile explicitly, then use the official installer:

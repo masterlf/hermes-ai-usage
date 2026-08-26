@@ -35,6 +35,21 @@ class UnifiedPackageContractTests(unittest.TestCase):
         for relative in PLUGIN_FILES:
             self.assertTrue((ROOT / relative).is_file(), relative)
 
+    def test_codeowners_routes_the_canonical_dashboard_api(self):
+        codeowners = (ROOT / ".github/CODEOWNERS").read_text(encoding="utf-8")
+        self.assertIn("/dashboard/plugin_api.py @masterlf", codeowners.splitlines())
+        self.assertNotIn("/runtime/dashboard/plugin_api.py", codeowners)
+
+    def test_release_docs_preserve_the_operator_action_boundary(self):
+        boundary = (
+            "Merging or publishing v0.7.4 distributes artifacts only; neither action deploys, "
+            "restarts, upgrades, or changes any Hermes installation. Installation or migration "
+            "remains a separate, explicit operator action."
+        )
+        for relative in ("README.md", "docs/INSTALLATION.md"):
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn(boundary, " ".join(source.split()), relative)
+
     def test_root_manifest_is_minimal_and_canonical(self):
         manifest = yaml.safe_load((ROOT / "plugin.yaml").read_text(encoding="utf-8"))
         self.assertEqual(manifest["name"], "ai-usage-monitor")

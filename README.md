@@ -18,6 +18,10 @@ It never reads prompt or message content.
 
 Current plugin version: **v0.7.4**.
 
+Merging or publishing v0.7.4 distributes artifacts only; neither action deploys, restarts,
+upgrades, or changes any Hermes installation. Installation or migration remains a separate,
+explicit operator action.
+
 Tested baseline (not a minimum-support claim): Hermes v0.20.5, upstream `1bbb6e5b`,
 local `981101239a064c020a9d18fc3b1060ae306934ed`, tested 2026-08-25.
 
