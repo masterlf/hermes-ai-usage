@@ -16,10 +16,14 @@ that separates three facts people often blur together:
 The plugin supports the native Hermes Desktop app and the Hermes Web Dashboard.
 It never reads prompt or message content.
 
-Current plugin version: **v0.7.3**.
+Current plugin version: **v0.7.4**.
 
-Tested baseline (not a minimum-support claim): Hermes v0.20.5, upstream `1bbb6e5b`,
-local `981101239a064c020a9d18fc3b1060ae306934ed`, tested 2026-08-25.
+Merging or publishing v0.7.4 distributes artifacts only; neither action deploys, restarts,
+upgrades, or changes any Hermes installation. Installation or migration remains a separate,
+explicit operator action.
+
+Tested baseline (not a minimum-support claim): Hermes v0.20.5, local source authority
+`981101239a064c020a9d18fc3b1060ae306934ed`, tested 2026-08-25.
 
 ## Features
 
@@ -88,11 +92,13 @@ Read [SECURITY.md](SECURITY.md), [the threat model](docs/THREAT_MODEL.md), and
 ## Repository layout
 
 ```text
+plugin.yaml                              Hermes plugin manifest (`ai-usage-monitor`)
+__init__.py                              Inert agent entry point
 desktop/plugin.js                         Native Hermes Desktop extension
-runtime/dashboard/manifest.json           Web Dashboard manifest
-runtime/dashboard/dist/index.js           Web Dashboard UI bundle
-runtime/dashboard/dist/style.css          Theme-aware dashboard styles
-runtime/dashboard/plugin_api.py           Read-only FastAPI router
+dashboard/manifest.json                   Web Dashboard manifest
+dashboard/dist/index.js                   Web Dashboard UI bundle
+dashboard/dist/style.css                  Theme-aware dashboard styles
+dashboard/plugin_api.py                   Read-only FastAPI router
 tests/                                    Backend and frontend smoke tests
 scripts/security_invariants.py             Privacy/security regression gate
 docs/                                     Architecture, installation, privacy, threat model
@@ -103,12 +109,71 @@ docs/                                     Architecture, installation, privacy, t
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for complete installation,
 verification, upgrade, and removal instructions.
 
-Install only the exact `v0.7.3` release archive after verifying `SHA256SUMS` and its
-repo-and-workflow-scoped GitHub provenance attestation. The archive's checked-in Python
-installer requires an explicit canonical `HERMES_HOME`, atomically replaces exact Dashboard
-and Desktop trees, keeps distinct component backups, and rolls both back if either swap
-fails. Configuration edits remain separate. This repository is not a native
-`hermes plugins install` package.
+Before the primary Git install, select the profile with `hermes profile show PROFILE_NAME`, copy
+its exact home, and run this fail-closed preflight. Any legacy standalone Desktop tree or
+non-Git/manual unified destination must use
+[Legacy split-tree migration or deterministic manual fallback](docs/INSTALLATION.md#legacy-split-tree-migration-or-deterministic-manual-fallback)
+instead; do not delete either tree or unrelated plugins.
+
+```bash
+export HERMES_HOME="/exact/Path/from-profile-show"
+test "$HERMES_HOME" = "$(realpath -e -- "$HERMES_HOME")"
+test -f "$HERMES_HOME/config.yaml"
+PLUGINS_ROOT="$HERMES_HOME/plugins"
+DESKTOP_PLUGINS_ROOT="$HERMES_HOME/desktop-plugins"
+for PLUGIN_ROOT in "$PLUGINS_ROOT" "$DESKTOP_PLUGINS_ROOT"; do
+  if [ -L "$PLUGIN_ROOT" ]; then
+    printf '%s\n' "Symlinked plugin root found; use the migration procedure." >&2
+    exit 1
+  fi
+  if [ -e "$PLUGIN_ROOT" ]; then
+    test -d "$PLUGIN_ROOT" &&
+      test "$PLUGIN_ROOT" = "$(realpath -e -- "$PLUGIN_ROOT")" || {
+        printf '%s\n' "Plugin root is not a canonical directory; use the migration procedure." >&2
+        exit 1
+      }
+  fi
+done
+LEGACY_DESKTOP="$HERMES_HOME/desktop-plugins/ai-usage-monitor"
+UNIFIED="$HERMES_HOME/plugins/ai-usage-monitor"
+if [ -e "$LEGACY_DESKTOP" ] || [ -L "$LEGACY_DESKTOP" ]; then
+  printf '%s\n' "Legacy Desktop tree found; use the migration procedure." >&2
+  exit 1
+fi
+if [ -e "$UNIFIED" ] || [ -L "$UNIFIED" ]; then
+  test -d "$UNIFIED" && test ! -L "$UNIFIED" || exit 1
+  test "$(git -C "$UNIFIED" rev-parse --show-toplevel)" = "$(realpath -e -- "$UNIFIED")" || {
+    printf '%s\n' "Existing unified tree is not its own Git clone; use the migration procedure." >&2
+    exit 1
+  }
+fi
+```
+
+The complete guide then resolves `v0.7.4` to an exact commit, installs it with
+`hermes plugins install ... --enable`, and verifies the installed clone's `HEAD`. That command
+enables the agent/Dashboard half only. For both a fresh Git install and a v0.7.2/v0.7.3
+split-tree migration, open Hermes Desktop **Settings → Plugins**, find **AI Usage Monitor** under
+**Desktop plugins**, choose **Rescan** if it is not inventoried yet, and confirm its switch is
+off. If an upgrade shows it on, switch it off first: the old standalone copy's enablement state
+is not authority for the new unified root. Then switch it on explicitly. No Desktop reload or
+restart is required; the tested host activates Desktop contributions live. Only then verify the
+AI Usage page and status-bar indicator.
+
+Git clone installation is not covered by archive `SHA256SUMS` or attestation. The manual
+migration verifies those controls, requires positive unified-host-contract evidence, swaps the
+two historical trees transactionally, preserves rollback evidence and configuration, and never
+removes unrelated plugins.
+
+A pinned exact-SHA install is intentionally immutable:
+`hermes plugins update ai-usage-monitor` is expected to fail closed rather than move it. For a
+Git version transition, preserve the old exact SHA and recovery prerequisites before removal,
+resolve the published version to a new exact 40-character commit SHA, disable and remove only
+`ai-usage-monitor` with supported commands, then install that SHA with the scanner enabled. Use
+a bounded interactive review of every `CAUTION` finding and stop on `BLOCK`. Never use `--force`
+or disable the scanner. Split-tree/manual users must use the transactional release installer,
+not this Git lifecycle. This transition must not delete or edit unrelated plugins or
+configuration. The complete commands and rollback path are in
+[docs/INSTALLATION.md](docs/INSTALLATION.md#pinned-git-version-transition).
 
 ## Development
 

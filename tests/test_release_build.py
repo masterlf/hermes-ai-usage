@@ -35,6 +35,10 @@ class ReleaseBuildTests(unittest.TestCase):
             with tarfile.open(fileobj=io.BytesIO(first.read_bytes()), mode="r:gz") as archive:
                 members = archive.getmembers()
                 prefix = f"hermes-ai-usage-v{build_release.VERSION}/"
+                self.assertEqual(
+                    [member.name.removeprefix(prefix) for member in members],
+                    list(build_release.FILES),
+                )
                 for member in members:
                     self.assertTrue(member.name.startswith(prefix))
                     relative = member.name.removeprefix(prefix)

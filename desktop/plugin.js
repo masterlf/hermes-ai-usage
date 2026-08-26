@@ -15,7 +15,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'ai-usage-monitor'
 const ROUTE = '/ai-usage'
-const VERSION = 'v0.7.3'
+const VERSION = 'v0.7.4'
 let pluginContext = null
 let chartInstance = 0
 

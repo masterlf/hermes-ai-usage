@@ -8,14 +8,17 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
-API = ROOT / "runtime/dashboard/plugin_api.py"
-JS_FILES = [ROOT / "desktop/plugin.js", ROOT / "runtime/dashboard/dist/index.js"]
+API = ROOT / "dashboard/plugin_api.py"
+JS_FILES = [ROOT / "desktop/plugin.js", ROOT / "dashboard/dist/index.js"]
 RELEASE_WORKFLOW = ROOT / ".github/workflows/release.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 PACKAGE = ROOT / "package.json"
 MAKEFILE = ROOT / "Makefile"
 INSTALLER = ROOT / "scripts/install_release.py"
+VERSION = "0.7.4"
 FORBIDDEN_JS = {
     "innerHTML": "raw HTML sink",
     "outerHTML": "raw HTML sink",
@@ -134,6 +137,24 @@ def javascript_invariants() -> None:
             fail(f"{path.relative_to(ROOT)} uses direct fetch instead of the Hermes SDK")
 
 
+def find_stale_production_path(root: Path) -> Path | None:
+    """Return the first non-historical file that names the obsolete production path."""
+    forbidden = "runtime" + "/dashboard"
+    for path in sorted(root.rglob("*")):
+        if any(part in IGNORED_PARTS for part in path.parts) or not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if relative == Path("CHANGELOG.md"):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if forbidden in text:
+            return relative
+    return None
+
+
 def repository_invariants() -> None:
     workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
     for required in (
@@ -168,6 +189,18 @@ def repository_invariants() -> None:
         if required not in installer:
             fail("release installer path or transactional safety regressed")
 
+    root_manifest = yaml.safe_load((ROOT / "plugin.yaml").read_text(encoding="utf-8"))
+    if (
+        root_manifest.get("name") != "ai-usage-monitor"
+        or str(root_manifest.get("version")) != VERSION
+    ):
+        fail("root plugin identity or version changed")
+    if root_manifest.get("manifest_version") != 1 or root_manifest.get("api_version") != 1:
+        fail("root plugin manifest/API version changed")
+    stale_path = find_stale_production_path(ROOT)
+    if stale_path is not None:
+        fail(f"obsolete production path reference is present in {stale_path}")
+
     for path in ROOT.rglob("*"):
         if any(part in IGNORED_PARTS for part in path.parts):
             continue
@@ -188,7 +221,7 @@ def repository_invariants() -> None:
             if pattern.search(text):
                 fail(f"high-confidence secret pattern in {relative}")
 
-    manifest = json.loads((ROOT / "runtime/dashboard/manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((ROOT / "dashboard/manifest.json").read_text(encoding="utf-8"))
     if manifest.get("name") != "ai-usage-monitor":
         fail("dashboard manifest name changed")
     tab = manifest.get("tab") or {}
@@ -196,6 +229,20 @@ def repository_invariants() -> None:
         fail("dashboard tab must remain visible at /ai-usage")
     if manifest.get("api") != "plugin_api.py":
         fail("dashboard API entry changed")
+    if manifest.get("version") != VERSION:
+        fail("dashboard version changed")
+    if f"const VERSION = 'v{VERSION}'" not in (ROOT / "desktop/plugin.js").read_text(
+        encoding="utf-8"
+    ):
+        fail("Desktop visible/runtime version changed")
+    if f'const VERSION = "v{VERSION}"' not in (ROOT / "dashboard/dist/index.js").read_text(
+        encoding="utf-8"
+    ):
+        fail("Dashboard visible version changed")
+    if f'VERSION = "{VERSION}"' not in (ROOT / "scripts/build_release.py").read_text(
+        encoding="utf-8"
+    ):
+        fail("release builder version changed")
 
 
 def main() -> None:
