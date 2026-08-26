@@ -5,7 +5,7 @@ PYTHON ?= python3
 test:
 	$(PYTHON) -m unittest discover -s tests -v
 	node --check desktop/plugin.js
-	node --check runtime/dashboard/dist/index.js
+	node --check dashboard/dist/index.js
 	node tests/test_dashboard_bundle.cjs
 	node tests/test_desktop_bundle.cjs
 	node tests/test_fuzz_config.cjs
@@ -16,7 +16,7 @@ fuzz:
 
 lint:
 	$(PYTHON) -m ruff check .
-	$(PYTHON) -m bandit -c pyproject.toml -r runtime/dashboard
+	$(PYTHON) -m bandit -c pyproject.toml -r dashboard
 
 security:
 	$(PYTHON) scripts/security_invariants.py

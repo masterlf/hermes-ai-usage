@@ -2,36 +2,56 @@
 
 ## Tested baseline
 
-This release was tested on 2026-08-25 with Hermes Agent v0.20.5, upstream Hermes
-commit `1bbb6e5b`, and local Hermes commit
-`981101239a064c020a9d18fc3b1060ae306934ed`. This is a tested baseline, not a
-claimed minimum supported version.
+This release targets the official unified Hermes plugin layout documented and implemented by
+the installed Hermes source baseline. The canonical runtime ID and install directory are both
+`ai-usage-monitor`.
 
-This repository is not packaged for native `hermes plugins install`. The release includes a
-stdlib-only installer that replaces the Dashboard and Desktop plugin trees exactly and
-transactionally. Configuration remains a separate operator-owned step.
+## Primary install path
 
-## Select the canonical profile home
-
-Discover the exact home instead of inferring it from a display name or alias:
+Select the intended Hermes profile explicitly, then use the official installer:
 
 ```bash
 hermes profile list
 hermes profile show PROFILE_NAME
 export HERMES_HOME="/exact/Path/from-profile-show"
 test -f "$HERMES_HOME/config.yaml"
+hermes plugins install masterlf/hermes-ai-usage
 ```
 
-`--hermes-home` is required. The installer rejects relative, non-canonical, or symlinked
-profile homes and rejects symlinked destination/ancestor components below that home.
+Hermes reads the root `plugin.yaml` and installs the repository as
+`$HERMES_HOME/plugins/ai-usage-monitor/`. The same tree contains the inert agent entry point,
+Dashboard manifest/API/bundle, and Desktop extension. Do not copy `desktop/plugin.js` into
+`$HERMES_HOME/desktop-plugins/`; a second copy creates duplicate Desktop inventory.
 
-## Verify and extract the exact release
+Use the supported lifecycle commands for a published Git install:
 
-Download the `v0.7.3` archive and `SHA256SUMS` into a new operator-selected directory:
+```bash
+hermes plugins doctor ai-usage-monitor
+hermes plugins list
+hermes plugins enable ai-usage-monitor
+hermes plugins disable ai-usage-monitor
+hermes plugins update ai-usage-monitor
+hermes plugins remove ai-usage-monitor
+```
+
+An exact local pre-release commit can be cloned with a `file://` identifier for isolated
+validation, but Hermes intentionally warns about local/insecure URL schemes. That warning is
+not a production endorsement and must not be bypassed when a scanner returns `BLOCK`.
+
+## Legacy split-tree migration or deterministic manual fallback
+
+The old installation used both of these exact trees:
+
+```text
+$HERMES_HOME/plugins/ai-usage-monitor/
+$HERMES_HOME/desktop-plugins/ai-usage-monitor/
+```
+
+Download the exact v0.7.4 release and verify its checksum and provenance before extraction:
 
 ```bash
 set -eu
-VERSION=v0.7.3
+VERSION=v0.7.4
 WORKDIR="$(mktemp -d)"
 cd "$WORKDIR"
 gh release download "$VERSION" --repo masterlf/hermes-ai-usage \
@@ -45,47 +65,27 @@ tar --extract --gzip --no-same-owner --no-same-permissions \
 cd "hermes-ai-usage-$VERSION"
 ```
 
-The builder permits only fixed, relative regular-file archive members. `--no-same-owner` and
-`--no-same-permissions` prevent archive metadata from selecting local ownership or extraction
-modes. Byte-for-byte reproducibility is asserted only when both builds use an identical Python
-runtime and compression toolchain; `SHA256SUMS` remains the release identity.
-
-## Install or upgrade
-
-Stop the affected Hermes backend, Dashboard, gateway, and Desktop processes. Select a unique,
-safe backup identifier, then run the checked-in installer from the extracted release root:
+Stop affected Hermes and Desktop processes. Use a unique safe backup identifier and the
+explicit canonical profile home discovered above:
 
 ```bash
-BACKUP_ID="pre-v0.7.3"
+BACKUP_ID="pre-v0.7.4"
 python3 scripts/install_release.py \
   --hermes-home "$HERMES_HOME" \
   --backup-id "$BACKUP_ID"
 ```
 
-The installer stages each exact tree on its destination filesystem, gives directories mode
-`0755` and files mode `0644`, and atomically swaps the two components. Existing trees become
-distinct sibling backups named for Dashboard and Desktop. If either swap fails, both
-components return to their pre-install state. Exact-tree replacement removes stale plugin
-files while preserving unrelated files such as `config.yaml`.
+The installer rejects relative/non-canonical homes, symlinked destinations or ancestors,
+unexpected object types, path escapes, unsafe backup IDs, and pre-existing backup state. It
+stages the exact unified package on the destination filesystem, atomically replaces
+`plugins/ai-usage-monitor`, then retires only the exact legacy standalone Desktop tree.
+Distinct backups preserve the old plugin and Desktop trees. Any failed swap or retirement
+restores the complete split-tree state. `config.yaml` and unrelated plugins are never read or
+modified.
 
-Add `ai-usage-monitor` to the existing `plugins.enabled` list while preserving every existing
-entry, then run `hermes config check`. Dashboard-only companions may not be recognised by
-`hermes plugins enable`; that does not justify replacing the list. Restart the stopped
-processes only after configuration validation succeeds.
+## Roll back a manual migration
 
-## Verify
-
-1. Confirm `hermes config check` succeeds.
-2. Open `/ai-usage` in the authenticated Dashboard and AI Usage in Desktop.
-3. Confirm `/api/plugins/ai-usage-monitor/health` returns `ok: true` through the authenticated
-   Dashboard session.
-4. Confirm unsupported quota providers, malformed responses, and unavailable history render
-   as unavailable, never as zero.
-5. Confirm `state.db` remains unchanged using the deployment's backup/integrity process.
-
-## Roll back
-
-Stop the affected processes. Restore both exact pre-install trees transactionally:
+Stop affected processes and restore both old trees as one transaction:
 
 ```bash
 python3 scripts/install_release.py \
@@ -94,14 +94,22 @@ python3 scripts/install_release.py \
   --rollback
 ```
 
-A single component can be restored independently with `--component dashboard` or
-`--component desktop`. Use only the backup identifier created for the same canonical profile
-home. Restore any separately managed `config.yaml` change separately, run
-`hermes config check`, verify the restored UI/API, and restart.
+Rollback consumes the complete backup state created by the matching install. Partial component
+rollback is deliberately unsupported because it can recreate contradictory inventories.
+
+## Verify
+
+1. Confirm `hermes plugins doctor ai-usage-monitor` and `hermes plugins list` succeed.
+2. Open `/ai-usage` in the authenticated Dashboard and AI Usage in Desktop.
+3. Confirm `/api/plugins/ai-usage-monitor/health` returns `ok: true` through the authenticated
+   Dashboard session.
+4. Confirm `$HERMES_HOME/desktop-plugins/ai-usage-monitor` is absent after migration.
+5. Confirm unsupported quota providers, malformed responses, and unavailable history render as
+   unavailable, never fabricated zero.
+6. Confirm `state.db` bytes remain unchanged using the deployment's integrity process.
 
 ## Remove
 
-Remove `ai-usage-monitor` from `plugins.enabled` while preserving other entries, delete only
-`$HERMES_HOME/plugins/ai-usage-monitor/` and
-`$HERMES_HOME/desktop-plugins/ai-usage-monitor/`, validate configuration, and restart. The
-plugin creates no database or browser storage.
+Use `hermes plugins remove ai-usage-monitor`. For a manual fallback installation, delete only
+`$HERMES_HOME/plugins/ai-usage-monitor/` after stopping affected processes. The plugin creates
+no database or browser storage.

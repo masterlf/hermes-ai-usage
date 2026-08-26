@@ -7,7 +7,7 @@
 
   const React = SDK.React;
   const h = React.createElement;
-  const VERSION = "v0.7.3";
+  const VERSION = "v0.7.4";
   let chartInstance = 0;
 
   function api(path) {

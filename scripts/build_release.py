@@ -10,26 +10,33 @@ import json
 import tarfile
 from pathlib import Path
 
-VERSION = "0.7.3"
+VERSION = "0.7.4"
 FILES = (
+    "plugin.yaml",
+    "__init__.py",
     "CHANGELOG.md",
     "LICENSE",
     "NOTICE",
     "README.md",
+    "dashboard/dist/index.js",
+    "dashboard/dist/style.css",
+    "dashboard/manifest.json",
+    "dashboard/plugin_api.py",
     "desktop/plugin.js",
     "docs/INSTALLATION.md",
     "scripts/install_release.py",
-    "runtime/dashboard/dist/index.js",
-    "runtime/dashboard/dist/style.css",
-    "runtime/dashboard/manifest.json",
-    "runtime/dashboard/plugin_api.py",
 )
 
 
 def build(root: Path, output_dir: Path) -> tuple[Path, Path]:
-    manifest = json.loads((root / "runtime/dashboard/manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("version") != VERSION:
-        raise ValueError("manifest version does not match release builder")
+    dashboard_manifest = json.loads(
+        (root / "dashboard/manifest.json").read_text(encoding="utf-8")
+    )
+    plugin_manifest = (root / "plugin.yaml").read_text(encoding="utf-8")
+    if dashboard_manifest.get("version") != VERSION:
+        raise ValueError("Dashboard manifest version does not match release builder")
+    if f"version: {VERSION}\n" not in plugin_manifest:
+        raise ValueError("root manifest version does not match release builder")
     output_dir.mkdir(parents=True, exist_ok=True)
     archive = output_dir / f"hermes-ai-usage-v{VERSION}.tar.gz"
     buffer = io.BytesIO()

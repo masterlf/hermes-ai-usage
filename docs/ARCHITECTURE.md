@@ -10,7 +10,7 @@ receives an `AccountUsageSnapshot`. Credentials never enter plugin state or resp
 
 ### Read-only backend
 
-`runtime/dashboard/plugin_api.py` exports a FastAPI `APIRouter`. Hermes mounts it at
+`dashboard/plugin_api.py` exports a FastAPI `APIRouter`. Hermes mounts it at
 `/api/plugins/ai-usage-monitor/` behind the Dashboard's authentication middleware.
 
 The backend:
@@ -46,7 +46,7 @@ The backend:
 
 ### Hermes Web Dashboard
 
-`runtime/dashboard/dist/index.js` is an IIFE loaded by the host Dashboard. It uses
+`dashboard/dist/index.js` is an IIFE loaded by the host Dashboard. It uses
 `window.__HERMES_PLUGIN_SDK__.fetchJSON`, which preserves host authentication and
 profile scope. React elements render all provider/database strings as text. The bundle
 does not import third-party code or access cookies/storage.

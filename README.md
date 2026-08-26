@@ -16,7 +16,7 @@ that separates three facts people often blur together:
 The plugin supports the native Hermes Desktop app and the Hermes Web Dashboard.
 It never reads prompt or message content.
 
-Current plugin version: **v0.7.3**.
+Current plugin version: **v0.7.4**.
 
 Tested baseline (not a minimum-support claim): Hermes v0.20.5, upstream `1bbb6e5b`,
 local `981101239a064c020a9d18fc3b1060ae306934ed`, tested 2026-08-25.
@@ -88,11 +88,13 @@ Read [SECURITY.md](SECURITY.md), [the threat model](docs/THREAT_MODEL.md), and
 ## Repository layout
 
 ```text
+plugin.yaml                              Hermes plugin manifest (`ai-usage-monitor`)
+__init__.py                              Inert agent entry point
 desktop/plugin.js                         Native Hermes Desktop extension
-runtime/dashboard/manifest.json           Web Dashboard manifest
-runtime/dashboard/dist/index.js           Web Dashboard UI bundle
-runtime/dashboard/dist/style.css          Theme-aware dashboard styles
-runtime/dashboard/plugin_api.py           Read-only FastAPI router
+dashboard/manifest.json                   Web Dashboard manifest
+dashboard/dist/index.js                   Web Dashboard UI bundle
+dashboard/dist/style.css                  Theme-aware dashboard styles
+dashboard/plugin_api.py                   Read-only FastAPI router
 tests/                                    Backend and frontend smoke tests
 scripts/security_invariants.py             Privacy/security regression gate
 docs/                                     Architecture, installation, privacy, threat model
@@ -103,12 +105,14 @@ docs/                                     Architecture, installation, privacy, t
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for complete installation,
 verification, upgrade, and removal instructions.
 
-Install only the exact `v0.7.3` release archive after verifying `SHA256SUMS` and its
-repo-and-workflow-scoped GitHub provenance attestation. The archive's checked-in Python
-installer requires an explicit canonical `HERMES_HOME`, atomically replaces exact Dashboard
-and Desktop trees, keeps distinct component backups, and rolls both back if either swap
-fails. Configuration edits remain separate. This repository is not a native
-`hermes plugins install` package.
+The primary installation path is `hermes plugins install masterlf/hermes-ai-usage`. Hermes
+installs the unified package at `$HERMES_HOME/plugins/ai-usage-monitor/`; that one tree is
+discovered by the agent, Dashboard, and Desktop hosts. For legacy split-tree migrations and
+offline/manual fallback, verify the exact `v0.7.4` archive, `SHA256SUMS`, and provenance, then
+use the checked-in installer. It requires an explicit canonical `HERMES_HOME`, atomically
+replaces the unified tree, retires only the exact legacy standalone Desktop tree after
+successful installation, keeps distinct backups, and restores the complete old state on
+failure. Configuration edits remain operator-owned.
 
 ## Development
 

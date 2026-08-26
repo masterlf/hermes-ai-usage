@@ -1,0 +1,13 @@
+name: ai-usage-monitor
+version: 0.7.4
+manifest_version: 1
+api_version: 1
+description: Read-only provider quota and local token usage for Hermes Desktop and Web Dashboard.
+author: BlueTeamForge
+license: Apache-2.0
+homepage: https://github.com/masterlf/hermes-ai-usage
+tags:
+  - observability
+  - usage
+  - dashboard
+  - desktop

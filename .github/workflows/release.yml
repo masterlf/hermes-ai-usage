@@ -32,7 +32,7 @@ jobs:
           set -euo pipefail
           [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]
           test "$(git rev-parse --verify "$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
-          test "$RELEASE_TAG" = "v$(python3 -c 'import json; print(json.load(open("runtime/dashboard/manifest.json", encoding="utf-8"))["version"])')"
+          test "$RELEASE_TAG" = "v$(python3 -c 'import json; print(json.load(open("dashboard/manifest.json", encoding="utf-8"))["version"])')"
           git fetch --no-tags origin main:refs/remotes/origin/main
           git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/main"
 

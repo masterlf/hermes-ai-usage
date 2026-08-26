@@ -5,6 +5,21 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-08-26
+
+### Changed
+
+- The repository is now one official Hermes hybrid plugin package with canonical runtime ID
+  `ai-usage-monitor`, a minimal root manifest and inert agent entry point, and co-located
+  Dashboard and Desktop extensions under the installed plugin tree.
+- `hermes plugins install masterlf/hermes-ai-usage` is now the primary installation path.
+
+### Security
+
+- The manual legacy migration stages and atomically swaps the unified package before retiring
+  only the exact standalone Desktop tree, keeps distinct split-tree backups, preserves config
+  and unrelated plugins, and restores the complete old state after any failed boundary.
+
 ## [0.7.3] - 2026-08-25
 
 ### Security
@@ -175,7 +190,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only provider-quota snapshots and seven-day token history.
 - French and English UI text.
 
-[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.4
 [0.7.3]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.3
 [0.7.2]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.2
 [0.7.1]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.1

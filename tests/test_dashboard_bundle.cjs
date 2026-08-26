@@ -175,11 +175,11 @@ function contrastRatio(foreground, background) {
 }
 
 (async () => {
-  const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
-  const manifest = JSON.parse(fs.readFileSync('runtime/dashboard/manifest.json', 'utf8'));
+  const dashboardSource = fs.readFileSync('dashboard/dist/index.js', 'utf8');
+  const manifest = JSON.parse(fs.readFileSync('dashboard/manifest.json', 'utf8'));
   const readme = fs.readFileSync('README.md', 'utf8');
-  if (manifest.version !== '0.7.3') throw new Error('dashboard manifest version is not 0.7.3');
-  if (!readme.includes('Current plugin version: **v0.7.3**')) throw new Error('README does not identify v0.7.3');
+  if (manifest.version !== '0.7.4') throw new Error('dashboard manifest version is not 0.7.4');
+  if (!readme.includes('Current plugin version: **v0.7.4**')) throw new Error('README does not identify v0.7.4');
   if (!readme.includes('non_cache_read_tokens = input_tokens + output_tokens + cache_write_tokens')) throw new Error('README does not document the neutral metric formula');
   if (!readme.includes('Desktop and Web Dashboard initially request `scope=all`')) throw new Error('README does not document the client scope default');
   const instrumentedSource = dashboardSource.replace(
@@ -187,7 +187,7 @@ function contrastRatio(foreground, background) {
     'window.__compositionOf = compositionOf; window.__quotaPercentages = quotaPercentages; window.__normalizeHistoryResponse = normalizeHistoryResponse; window.__AccountCard = AccountCard; window.__ProfileBreakdown = ProfileBreakdown; window.__UsageChart = UsageChart; window.__HistoryUnavailable = HistoryUnavailable; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
   );
   vm.runInNewContext(instrumentedSource, sandbox);
-  const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
+  const dashboardStyles = fs.readFileSync('dashboard/dist/style.css', 'utf8');
   const compositionOf = sandbox.window.__compositionOf;
   const quotaPercentages = sandbox.window.__quotaPercentages;
   const normalizeHistoryResponse = sandbox.window.__normalizeHistoryResponse;
@@ -344,7 +344,7 @@ function contrastRatio(foreground, background) {
   const initialHistoryCall = calls.find(path => path.includes('/history?'));
   if (!initialHistoryCall || !initialHistoryCall.includes('scope=all')) throw new Error('dashboard initial request is not all-profile: ' + calls.join(', '));
   const rendered = flatten(render());
-  if (!rendered.includes('v0.7.3')) throw new Error('dashboard visible plugin version missing');
+  if (!rendered.includes('v0.7.4')) throw new Error('dashboard visible plugin version missing');
   const renderedOrder = ['Utilisation des tokens', 'Consommation par profil', 'Sessions récentes'].map(label => rendered.indexOf(label));
   if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('dashboard chart/profile/recent order is incorrect: ' + renderedOrder);
   if (!rendered.includes('35% restants')) throw new Error('provider quota fallback was not rendered');

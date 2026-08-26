@@ -302,7 +302,7 @@ if (restCalls[restCalls.length - 1].includes('scope=all')) throw new Error('Desk
 sandbox.globalThis.__setHarnessStateful(false);
 const tree = resolveTree(page.render());
 const rendered = flatten(tree);
-if (!rendered.includes('v0.7.3')) throw new Error('Desktop visible plugin version missing');
+if (!rendered.includes('v0.7.4')) throw new Error('Desktop visible plugin version missing');
 const renderedOrder = ['Token usage', 'Usage by profile', 'Recent usage'].map(label => rendered.indexOf(label));
 if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('Desktop chart/profile/recent order is incorrect: ' + renderedOrder);
 if (!rendered.includes('Token usage')) throw new Error('Desktop usage chart missing: ' + rendered);

@@ -33,7 +33,7 @@ sys.modules.setdefault("hermes_cli", hermes_cli_package)
 sys.modules.setdefault("hermes_cli.config", config_module)
 sys.modules.setdefault("hermes_constants", constants_module)
 
-MODULE_PATH = Path(__file__).parents[1] / "runtime" / "dashboard" / "plugin_api.py"
+MODULE_PATH = Path(__file__).parents[1] / "dashboard" / "plugin_api.py"
 spec = importlib.util.spec_from_file_location("ai_usage_monitor_plugin_api", MODULE_PATH)
 module = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
@@ -914,6 +914,22 @@ class HistoryTests(unittest.TestCase):
                     connection.execute("INSERT INTO sessions (id) VALUES ('forbidden')")
             finally:
                 connection.close()
+
+    def test_history_read_preserves_state_database_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._create_state_db(home)
+            database_path = home / "state.db"
+            before = database_path.read_bytes()
+
+            with (
+                mock.patch.object(module, "get_hermes_home", lambda: home),
+                mock.patch.object(module.time, "time", return_value=1100),
+            ):
+                payload = module._token_history(7, 30)
+
+            self.assertTrue(payload["available"])
+            self.assertEqual(database_path.read_bytes(), before)
 
     def test_all_profiles_uses_database_home_identity_and_tolerates_failure(self):
         with tempfile.TemporaryDirectory() as tmp:

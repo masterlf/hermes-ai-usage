@@ -58,7 +58,7 @@ function createElement(type, props, ...children) {
 }
 
 function loadWebContracts() {
-  let source = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
+  let source = fs.readFileSync('dashboard/dist/index.js', 'utf8');
   const marker = 'registry.register("ai-usage-monitor", AIUsagePage);';
   assert(source.includes(marker), 'Web bundle registration marker changed');
   source = source.replace(marker, [
