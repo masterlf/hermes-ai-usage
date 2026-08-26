@@ -44,6 +44,12 @@ jobs:
       - name: Install locked development dependencies
         run: python3 -m pip install --require-hashes -r requirements-dev.txt
 
+      - name: Install locked JavaScript fuzz dependency without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Audit JavaScript dependencies
+        run: npm audit --audit-level=high
+
       - name: Run canonical checks on the exact tagged SHA
         run: make check
 

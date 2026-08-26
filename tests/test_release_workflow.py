@@ -22,6 +22,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn(
             "python3 -m pip install --require-hashes -r requirements-dev.txt", self.source
         )
+        self.assertIn("npm ci --ignore-scripts", self.source)
+        self.assertIn("npm audit --audit-level=high", self.source)
+        self.assertLess(
+            self.source.index("npm ci --ignore-scripts"), self.source.index("make check")
+        )
         self.assertLess(
             self.source.index("make check"), self.source.index("actions/upload-artifact@")
         )
@@ -38,6 +43,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("id-token: write", publish)
         self.assertNotIn("actions/checkout@", publish)
         self.assertIn("sha256sum --check SHA256SUMS", publish)
+        self.assertNotIn("npm ", publish)
+        self.assertNotIn("make check", publish)
 
     def test_action_pins_and_artifact_identity_are_exact(self):
         for pin in (
