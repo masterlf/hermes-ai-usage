@@ -1,19 +1,57 @@
 'use strict';
 
-const assert = require('assert');
-const fc = require('fast-check');
-const fs = require('fs');
-const vm = require('vm');
+const USAGE = 'Usage: FUZZ_RUNS=<1..1000> [FUZZ_SEED=<signed-32-bit-integer> [FUZZ_PATH=<counterexample-path>]] make fuzz';
 
-const RUNS = Number.parseInt(process.env.FUZZ_RUNS || '250', 10);
+function failUsage() {
+  console.error(USAGE);
+  process.exit(2);
+}
+
+function parseInteger(name, fallback, minimum, maximum) {
+  if (!Object.prototype.hasOwnProperty.call(process.env, name)) return fallback;
+  const raw = process.env[name];
+  if (!/^-?(0|[1-9]\d*)$/.test(raw)) failUsage();
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) failUsage();
+  return value;
+}
+
+function parseReplayPath() {
+  if (!Object.prototype.hasOwnProperty.call(process.env, 'FUZZ_PATH')) return undefined;
+  const path = process.env.FUZZ_PATH;
+  if (!Object.prototype.hasOwnProperty.call(process.env, 'FUZZ_SEED')
+      || path.length > 4096
+      || !/^\d+(?::\d+)*$/.test(path)
+      || path.split(':').some(part => !Number.isSafeInteger(Number(part)))) {
+    failUsage();
+  }
+  return path;
+}
+
+const RUNS = parseInteger('FUZZ_RUNS', 250, 1, 1000);
+const SEED = parseInteger('FUZZ_SEED', undefined, -2147483648, 2147483647);
+const PATH = parseReplayPath();
 const parameters = {
-  numRuns: Number.isSafeInteger(RUNS) && RUNS > 0 && RUNS <= 5000 ? RUNS : 250,
+  numRuns: RUNS,
   interruptAfterTimeLimit: 20_000,
   markInterruptAsFailure: true,
   verbose: 1
 };
-if (process.env.FUZZ_SEED) parameters.seed = Number.parseInt(process.env.FUZZ_SEED, 10);
-if (process.env.FUZZ_PATH) parameters.path = process.env.FUZZ_PATH;
+if (SEED !== undefined) parameters.seed = SEED;
+if (PATH !== undefined) parameters.path = PATH;
+
+if (process.argv.length === 3 && process.argv[2] === '--validate-config') {
+  const replay = [SEED === undefined ? null : `seed ${SEED}`, PATH === undefined ? null : `path ${PATH}`]
+    .filter(Boolean)
+    .join(', ');
+  console.log(`fuzz config: ok (${RUNS} runs/property${replay ? `, ${replay}` : ''})`);
+  process.exit(0);
+}
+
+const assert = require('assert');
+const fc = require('fast-check');
+const fs = require('fs');
+const vm = require('vm');
 
 function createElement(type, props, ...children) {
   return { type, props: { ...(props || {}), children: children.length === 1 ? children[0] : children }, children };

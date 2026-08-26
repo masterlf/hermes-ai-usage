@@ -22,10 +22,13 @@ properties require fail-closed history rendering, bounded percentages, no raw-HT
 sink, and matching Desktop/Web semantics.
 
 CI runs this suite on every push and pull request; exact-tag release verification runs
-it again through `make check`. Failures print a replayable seed and shrink path. Replay
-with `FUZZ_SEED=<seed> FUZZ_PATH='<path>' make fuzz`; use `FUZZ_RUNS=<1..5000>` for a
-longer local run. This improves schema robustness; it is not complete vulnerability
-coverage and does not replace review, static analysis, or dedicated security testing.
+it again through `make check`. An actual `fast-check` counterexample prints a replayable
+seed and shrink path; copy both exactly and replay with
+`FUZZ_SEED=<seed> FUZZ_PATH='<path>' make fuzz`. A timeout interruption has no shrink
+path to replay. Use `FUZZ_RUNS=<1..1000>` for a longer bounded local run. Invalid run,
+seed, or path values fail before fuzzing starts. This improves schema robustness; it is
+not complete vulnerability coverage and does not replace review, static analysis, or
+dedicated security testing.
 
 ## Pull-request expectations
 

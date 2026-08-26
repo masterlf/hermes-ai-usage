@@ -8,6 +8,7 @@ test:
 	node --check runtime/dashboard/dist/index.js
 	node tests/test_dashboard_bundle.cjs
 	node tests/test_desktop_bundle.cjs
+	node tests/test_fuzz_config.cjs
 	$(MAKE) fuzz
 
 fuzz:
