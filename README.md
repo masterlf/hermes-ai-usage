@@ -119,6 +119,21 @@ instead; do not delete either tree or unrelated plugins.
 export HERMES_HOME="/exact/Path/from-profile-show"
 test "$HERMES_HOME" = "$(realpath -e -- "$HERMES_HOME")"
 test -f "$HERMES_HOME/config.yaml"
+PLUGINS_ROOT="$HERMES_HOME/plugins"
+DESKTOP_PLUGINS_ROOT="$HERMES_HOME/desktop-plugins"
+for PLUGIN_ROOT in "$PLUGINS_ROOT" "$DESKTOP_PLUGINS_ROOT"; do
+  if [ -L "$PLUGIN_ROOT" ]; then
+    printf '%s\n' "Symlinked plugin root found; use the migration procedure." >&2
+    exit 1
+  fi
+  if [ -e "$PLUGIN_ROOT" ]; then
+    test -d "$PLUGIN_ROOT" &&
+      test "$PLUGIN_ROOT" = "$(realpath -e -- "$PLUGIN_ROOT")" || {
+        printf '%s\n' "Plugin root is not a canonical directory; use the migration procedure." >&2
+        exit 1
+      }
+  fi
+done
 LEGACY_DESKTOP="$HERMES_HOME/desktop-plugins/ai-usage-monitor"
 UNIFIED="$HERMES_HOME/plugins/ai-usage-monitor"
 if [ -e "$LEGACY_DESKTOP" ] || [ -L "$LEGACY_DESKTOP" ]; then
@@ -148,6 +163,17 @@ Git clone installation is not covered by archive `SHA256SUMS` or attestation. Th
 migration verifies those controls, requires positive unified-host-contract evidence, swaps the
 two historical trees transactionally, preserves rollback evidence and configuration, and never
 removes unrelated plugins.
+
+A pinned exact-SHA install is intentionally immutable:
+`hermes plugins update ai-usage-monitor` is expected to fail closed rather than move it. For a
+Git version transition, preserve the old exact SHA and recovery prerequisites before removal,
+resolve the published version to a new exact 40-character commit SHA, disable and remove only
+`ai-usage-monitor` with supported commands, then install that SHA with the scanner enabled. Use
+a bounded interactive review of every `CAUTION` finding and stop on `BLOCK`. Never use `--force`
+or disable the scanner. Split-tree/manual users must use the transactional release installer,
+not this Git lifecycle. This transition must not delete or edit unrelated plugins or
+configuration. The complete commands and rollback path are in
+[docs/INSTALLATION.md](docs/INSTALLATION.md#pinned-git-version-transition).
 
 ## Development
 

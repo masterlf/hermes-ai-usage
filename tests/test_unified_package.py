@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,6 +32,28 @@ PLUGIN_FILES = {
 
 
 class UnifiedPackageContractTests(unittest.TestCase):
+    @staticmethod
+    def _primary_preflight(relative: str) -> str:
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        heading = "## Primary install path" if relative.startswith("docs/") else "## Installation"
+        start = source.index("```bash", source.index(heading)) + len("```bash")
+        end = source.index("```", start)
+        block = source[start:end].strip()
+        block = block[block.index('export HERMES_HOME="'):]
+        return block.split('V074_SHA="', 1)[0]
+
+    def _run_primary_preflight(self, relative: str, home: Path) -> subprocess.CompletedProcess[str]:
+        script = self._primary_preflight(relative).replace(
+            'export HERMES_HOME="/exact/Path/from-profile-show"',
+            f'export HERMES_HOME="{home}"',
+        )
+        return subprocess.run(  # noqa: S603 - executes the checked-in operator preflight
+            ["/bin/bash", "-c", f"set -eu\n{script}\nprintf 'WOULD_INSTALL\\n'"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
     def test_repository_exposes_exact_runtime_package_shape(self):
         obsolete_path = Path("runtime") / "dashboard"
         self.assertFalse((ROOT / obsolete_path).exists())
@@ -112,6 +135,79 @@ class UnifiedPackageContractTests(unittest.TestCase):
             source = (ROOT / relative).read_text(encoding="utf-8")
             for marker in required:
                 self.assertIn(marker, source, f"{relative}: {marker}")
+
+    def test_primary_git_preflight_rejects_symlinked_plugin_roots_without_mutation(self):
+        for relative in ("README.md", "docs/INSTALLATION.md"):
+            for root_name in ("plugins", "desktop-plugins"):
+                with (
+                    self.subTest(relative=relative, root=root_name),
+                    tempfile.TemporaryDirectory() as temporary,
+                ):
+                    scratch = Path(temporary)
+                    home = scratch / "home"
+                    outside = scratch / "outside"
+                    home.mkdir()
+                    outside.mkdir()
+                    config = home / "config.yaml"
+                    unrelated = home / "unrelated-plugin.sentinel"
+                    target_sentinel = outside / "target.sentinel"
+                    config.write_text("plugins: {}\n", encoding="utf-8")
+                    unrelated.write_text("unrelated\n", encoding="utf-8")
+                    target_sentinel.write_text("outside\n", encoding="utf-8")
+                    (home / root_name).symlink_to(outside, target_is_directory=True)
+                    before = (
+                        config.read_bytes(),
+                        unrelated.read_bytes(),
+                        target_sentinel.read_bytes(),
+                    )
+
+                    result = self._run_primary_preflight(relative, home)
+
+                    self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertNotIn("WOULD_INSTALL", result.stdout)
+                    self.assertTrue((home / root_name).is_symlink())
+                    self.assertEqual(
+                        (config.read_bytes(), unrelated.read_bytes(), target_sentinel.read_bytes()),
+                        before,
+                    )
+
+    def test_primary_git_preflight_allows_absent_regular_plugin_roots(self):
+        for relative in ("README.md", "docs/INSTALLATION.md"):
+            with self.subTest(relative=relative), tempfile.TemporaryDirectory() as temporary:
+                home = Path(temporary) / "home"
+                home.mkdir()
+                (home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+
+                result = self._run_primary_preflight(relative, home)
+
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("WOULD_INSTALL", result.stdout)
+                self.assertFalse((home / "plugins").exists())
+                self.assertFalse((home / "desktop-plugins").exists())
+
+    def test_release_docs_describe_truthful_pinned_git_transition(self):
+        required = (
+            "pinned exact-SHA install is intentionally immutable",
+            "`hermes plugins update ai-usage-monitor` is expected to fail closed",
+            "new exact 40-character commit SHA",
+            "scanner enabled",
+            "bounded interactive review of every `CAUTION` finding",
+            "stop on `BLOCK`",
+            "Never use `--force` or disable the scanner",
+            "transactional release installer, not this Git lifecycle",
+            "preserve the old exact SHA and recovery prerequisites before removal",
+            "unrelated plugins or configuration",
+        )
+        obsolete_lifecycle = (
+            "\nhermes plugins disable ai-usage-monitor\n"
+            "hermes plugins update ai-usage-monitor\n"
+        )
+        for relative in ("README.md", "docs/INSTALLATION.md"):
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            prose = " ".join(source.split())
+            for marker in required:
+                self.assertIn(marker, prose, f"{relative}: {marker}")
+            self.assertNotIn(obsolete_lifecycle, source, relative)
 
     def test_tested_baseline_uses_local_source_as_authority(self):
         authority = "local source authority `981101239a064c020a9d18fc3b1060ae306934ed`"

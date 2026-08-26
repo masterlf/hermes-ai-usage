@@ -32,6 +32,21 @@ hermes profile show PROFILE_NAME
 export HERMES_HOME="/exact/Path/from-profile-show"
 test "$HERMES_HOME" = "$(realpath -e -- "$HERMES_HOME")"
 test -f "$HERMES_HOME/config.yaml"
+PLUGINS_ROOT="$HERMES_HOME/plugins"
+DESKTOP_PLUGINS_ROOT="$HERMES_HOME/desktop-plugins"
+for PLUGIN_ROOT in "$PLUGINS_ROOT" "$DESKTOP_PLUGINS_ROOT"; do
+  if [ -L "$PLUGIN_ROOT" ]; then
+    printf '%s\n' "Symlinked plugin root found; use the migration procedure below." >&2
+    exit 1
+  fi
+  if [ -e "$PLUGIN_ROOT" ]; then
+    test -d "$PLUGIN_ROOT" &&
+      test "$PLUGIN_ROOT" = "$(realpath -e -- "$PLUGIN_ROOT")" || {
+        printf '%s\n' "Plugin root is not a canonical directory; use the migration procedure below." >&2
+        exit 1
+      }
+  fi
+done
 LEGACY_DESKTOP="$HERMES_HOME/desktop-plugins/ai-usage-monitor"
 UNIFIED="$HERMES_HOME/plugins/ai-usage-monitor"
 if [ -e "$LEGACY_DESKTOP" ] || [ -L "$LEGACY_DESKTOP" ]; then
@@ -54,9 +69,10 @@ hermes plugins install masterlf/hermes-ai-usage --ref "$V074_SHA" --enable
 test "$(git -C "$UNIFIED" rev-parse HEAD)" = "$V074_SHA"
 ```
 
-These checks fail closed before installation. If the legacy standalone Desktop tree exists, or
-if the unified destination is a symlink, non-directory, non-Git/manual tree, or merely nested in
-some other Git worktree, stop and use
+These checks fail closed before installation. An absent regular plugin root is allowed because
+Hermes may create it. If either plugin root is a symlink, non-directory, or non-canonical path,
+if the legacy standalone Desktop tree exists, or if the unified destination is a symlink,
+non-directory, non-Git/manual tree, or merely nested in some other Git worktree, stop and use
 [Legacy split-tree migration or deterministic manual fallback](#legacy-split-tree-migration-or-deterministic-manual-fallback).
 Do not run the direct Git install first, and do not broadly delete plugin directories: the
 migration preserves unrelated plugins and configuration.
@@ -70,16 +86,68 @@ This Git clone installation is not covered by the release archive's `SHA256SUMS`
 attestation. Those controls apply only to the release-archive/manual path below; the exact
 resolved commit and installed-clone `HEAD` check provide the identity check for this path.
 
-Use the supported lifecycle commands for a published Git install:
+Use the supported day-to-day lifecycle commands for a published Git install:
 
 ```bash
 hermes plugins doctor ai-usage-monitor
 hermes plugins list
 hermes plugins enable ai-usage-monitor
 hermes plugins disable ai-usage-monitor
-hermes plugins update ai-usage-monitor
 hermes plugins remove ai-usage-monitor
 ```
+
+### Pinned Git version transition
+
+A pinned exact-SHA install is intentionally immutable:
+`hermes plugins update ai-usage-monitor` is expected to fail closed rather than move it. Do not
+claim or rely on an atomic update command for this path.
+
+Before the transition, preserve the old exact SHA and recovery prerequisites before removal.
+Confirm that both the old commit and the intended published version are reachable, resolve the
+version to a new exact 40-character commit SHA, and retain the printed recovery-record path until
+installation and verification finish:
+
+```bash
+set -eu
+UNIFIED="$HERMES_HOME/plugins/ai-usage-monitor"
+OLD_SHA="$(git -C "$UNIFIED" rev-parse HEAD)"
+printf '%s\n' "$OLD_SHA" | grep -Eq '^[0-9a-f]{40}$'
+test "$(gh api "repos/masterlf/hermes-ai-usage/commits/$OLD_SHA" --jq .sha)" = "$OLD_SHA"
+RECOVERY_FILE="$(mktemp)"
+chmod 600 "$RECOVERY_FILE"
+printf '%s\n' "$OLD_SHA" >"$RECOVERY_FILE"
+printf 'Recovery record: %s\n' "$RECOVERY_FILE"
+
+NEW_REF=vNEXT  # replace with the intended published version
+NEW_SHA="$(gh api "repos/masterlf/hermes-ai-usage/commits/$NEW_REF" --jq .sha)"
+printf '%s\n' "$NEW_SHA" | grep -Eq '^[0-9a-f]{40}$'
+test "$NEW_SHA" != "$OLD_SHA"
+
+hermes plugins disable ai-usage-monitor
+hermes plugins remove ai-usage-monitor
+test ! -e "$UNIFIED" && test ! -L "$UNIFIED"
+hermes plugins install masterlf/hermes-ai-usage --ref "$NEW_SHA" --enable
+test "$(git -C "$UNIFIED" rev-parse HEAD)" = "$NEW_SHA"
+hermes plugins doctor ai-usage-monitor
+```
+
+Keep the scanner enabled. Run installation in a bounded interactive session, perform a bounded
+interactive review of every `CAUTION` finding before consenting, and stop on `BLOCK`. Never use
+`--force` or disable the scanner. If the new installation does not complete, recover with the
+same supported install command and the retained old SHA, again reviewing scanner findings:
+
+```bash
+RECOVERY_FILE=/exact/path/printed-before-removal
+OLD_SHA="$(cat "$RECOVERY_FILE")"
+printf '%s\n' "$OLD_SHA" | grep -Eq '^[0-9a-f]{40}$'
+hermes plugins install masterlf/hermes-ai-usage --ref "$OLD_SHA" --enable
+test "$(git -C "$UNIFIED" rev-parse HEAD)" = "$OLD_SHA"
+hermes plugins doctor ai-usage-monitor
+```
+
+These commands target only `ai-usage-monitor`; do not delete or edit unrelated plugins or
+configuration. Split-tree/manual users must use the transactional release installer, not this
+Git lifecycle, so their two-tree rollback evidence remains intact.
 
 An exact local pre-release commit can be cloned with a `file://` identifier for isolated
 validation, but Hermes intentionally warns about local/insecure URL schemes. That warning is
