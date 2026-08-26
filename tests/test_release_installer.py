@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
+HOST_CONTRACT = "unified-desktop-plugin-root-v1"
 SPEC = importlib.util.spec_from_file_location(
     "install_release", ROOT / "scripts/install_release.py"
 )
@@ -34,6 +35,9 @@ class ReleaseInstallerTests(unittest.TestCase):
             self.home / "desktop-plugins/ai-usage-monitor",
         )
 
+    def _install(self, backup_id):
+        return install_release.install(ROOT, self.home, backup_id, HOST_CONTRACT)
+
     def test_upgrade_replaces_exact_trees_removes_stale_files_and_preserves_config(self):
         dashboard, desktop = self._destinations()
         (dashboard / "dashboard/dist").mkdir(parents=True)
@@ -42,7 +46,7 @@ class ReleaseInstallerTests(unittest.TestCase):
         (desktop / "stale.js").write_text("stale", encoding="utf-8")
         config_before = (self.home / "config.yaml").read_bytes()
 
-        install_release.install(ROOT, self.home, "upgrade")
+        self._install("upgrade")
 
         self.assertEqual(
             {
@@ -73,7 +77,7 @@ class ReleaseInstallerTests(unittest.TestCase):
         (dashboard / "old-dashboard").write_text("old", encoding="utf-8")
         (desktop / "old-desktop").write_text("old", encoding="utf-8")
 
-        backups = install_release.install(ROOT, self.home, "before-073")
+        backups = self._install("before-073")
 
         self.assertNotEqual(backups["unified"].name, backups["legacy_desktop"].name)
         self.assertTrue((backups["unified"] / "old-dashboard").is_file())
@@ -84,7 +88,7 @@ class ReleaseInstallerTests(unittest.TestCase):
 
     def test_fresh_install_rollback_restores_absent_component_state(self):
         dashboard, desktop = self._destinations()
-        install_release.install(ROOT, self.home, "fresh")
+        self._install("fresh")
         self.assertTrue(dashboard.is_dir())
         self.assertFalse(desktop.exists())
 
@@ -98,14 +102,14 @@ class ReleaseInstallerTests(unittest.TestCase):
         outside.mkdir()
         (self.home / "plugins").symlink_to(outside, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, "symlink"):
-            install_release.install(ROOT, self.home, "unsafe")
+            self._install("unsafe")
 
     def test_rejects_existing_regular_file_destination(self):
         destination = self.home / "desktop-plugins/ai-usage-monitor"
         destination.parent.mkdir(parents=True)
         destination.write_text("not a plugin tree", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "non-symlink directory"):
-            install_release.install(ROOT, self.home, "unsafe-file")
+            self._install("unsafe-file")
         self.assertEqual(destination.read_text(encoding="utf-8"), "not a plugin tree")
         self.assertEqual(list((self.home / "plugins").glob(".ai-usage-monitor.stage-*")), [])
 
@@ -127,7 +131,7 @@ class ReleaseInstallerTests(unittest.TestCase):
             mock.patch.object(install_release.os, "replace", side_effect=fail_legacy_retirement),
             self.assertRaisesRegex(OSError, "legacy retirement"),
         ):
-            install_release.install(ROOT, self.home, "failed")
+            self._install("failed")
 
         self.assertEqual({path.name for path in dashboard.iterdir()}, {"old-dashboard"})
         self.assertEqual({path.name for path in desktop.iterdir()}, {"old-desktop"})

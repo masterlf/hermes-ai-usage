@@ -26,6 +26,7 @@ _BACKUP_NAMES = {
     "legacy_desktop": ".ai-usage-monitor-legacy-desktop.backup-{backup_id}",
 }
 _BACKUP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_VERIFIED_HOST_CONTRACT = "unified-desktop-plugin-root-v1"
 
 
 def _canonical_home(home: Path) -> Path:
@@ -51,6 +52,13 @@ def _canonical_release_root(release_root: Path) -> Path:
 def _validate_backup_id(backup_id: str) -> None:
     if not _BACKUP_ID_RE.fullmatch(backup_id):
         raise ValueError("backup id must contain only safe ASCII filename characters")
+
+
+def _validate_host_contract(host_contract: str | None) -> None:
+    if host_contract != _VERIFIED_HOST_CONTRACT:
+        raise ValueError(
+            "host contract must be explicitly verified as " + _VERIFIED_HOST_CONTRACT
+        )
 
 
 def _reject_symlink_components(root: Path, path: Path) -> None:
@@ -134,8 +142,14 @@ def _create_absent_marker(path: Path) -> None:
     path.touch(mode=0o600, exist_ok=False)
 
 
-def install(release_root: Path, hermes_home: Path, backup_id: str) -> dict[str, Path]:
+def install(
+    release_root: Path,
+    hermes_home: Path,
+    backup_id: str,
+    host_contract: str | None,
+) -> dict[str, Path]:
     """Install one unified tree and transactionally retire the exact legacy Desktop tree."""
+    _validate_host_contract(host_contract)
     home = _canonical_home(hermes_home)
     release_root = _canonical_release_root(release_root)
     _validate_backup_id(backup_id)
@@ -241,13 +255,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hermes-home", required=True, type=Path)
     parser.add_argument("--backup-id", required=True)
+    parser.add_argument(
+        "--host-contract",
+        help=(
+            "required for installation after independently verifying "
+            + _VERIFIED_HOST_CONTRACT
+        ),
+    )
     parser.add_argument("--rollback", action="store_true")
     args = parser.parse_args()
     if args.rollback:
         rollback(args.hermes_home, args.backup_id)
         print(f"Rolled back unified and legacy Desktop trees under {args.hermes_home}")
     else:
-        install(Path(__file__).resolve().parent.parent, args.hermes_home, args.backup_id)
+        install(
+            Path(__file__).resolve().parent.parent,
+            args.hermes_home,
+            args.backup_id,
+            args.host_contract,
+        )
         print(
             f"Installed unified AI Usage package under {args.hermes_home}; "
             f"backup id: {args.backup_id}"

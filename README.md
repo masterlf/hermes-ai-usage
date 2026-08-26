@@ -109,14 +109,18 @@ docs/                                     Architecture, installation, privacy, t
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for complete installation,
 verification, upgrade, and removal instructions.
 
-The primary installation path is `hermes plugins install masterlf/hermes-ai-usage`. Hermes
-installs the unified package at `$HERMES_HOME/plugins/ai-usage-monitor/`; that one tree is
-discovered by the agent, Dashboard, and Desktop hosts. For legacy split-tree migrations and
-offline/manual fallback, verify the exact `v0.7.4` archive, `SHA256SUMS`, and provenance, then
-use the checked-in installer. It requires an explicit canonical `HERMES_HOME`, atomically
-replaces the unified tree, retires only the exact legacy standalone Desktop tree after
-successful installation, keeps distinct backups, and restores the complete old state on
-failure. Configuration edits remain operator-owned.
+The primary installation path resolves the `v0.7.4` tag to its exact 40-character commit SHA,
+then runs `hermes plugins install masterlf/hermes-ai-usage --ref "$V074_SHA" --enable` and
+verifies the installed clone's `HEAD`; see the complete commands in
+[docs/INSTALLATION.md](docs/INSTALLATION.md). Hermes installs the unified package at
+`$HERMES_HOME/plugins/ai-usage-monitor/`; that one tree is discovered by the agent, Dashboard,
+and Desktop hosts. Git clone installation is not covered by archive `SHA256SUMS` or attestation.
+For legacy split-tree migrations and offline/manual fallback, verify the exact `v0.7.4` archive,
+checksum, and provenance, then use the checked-in fail-closed installer. It requires an explicit
+canonical `HERMES_HOME` and positive unified-host-contract evidence, atomically replaces the
+unified tree, retires only the exact legacy standalone Desktop tree, keeps distinct rollback
+evidence, and restores the complete old state on failure. Configuration edits remain
+operator-owned.
 
 ## Development
 

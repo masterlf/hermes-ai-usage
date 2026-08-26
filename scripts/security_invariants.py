@@ -137,6 +137,24 @@ def javascript_invariants() -> None:
             fail(f"{path.relative_to(ROOT)} uses direct fetch instead of the Hermes SDK")
 
 
+def find_stale_production_path(root: Path) -> Path | None:
+    """Return the first non-historical file that names the obsolete production path."""
+    forbidden = "runtime" + "/dashboard"
+    for path in sorted(root.rglob("*")):
+        if any(part in IGNORED_PARTS for part in path.parts) or not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if relative == Path("CHANGELOG.md"):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if forbidden in text:
+            return relative
+    return None
+
+
 def repository_invariants() -> None:
     workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
     for required in (
@@ -179,8 +197,9 @@ def repository_invariants() -> None:
         fail("root plugin identity or version changed")
     if root_manifest.get("manifest_version") != 1 or root_manifest.get("api_version") != 1:
         fail("root plugin manifest/API version changed")
-    if (ROOT / "runtime/dashboard").exists():
-        fail("obsolete runtime/dashboard production path is present")
+    stale_path = find_stale_production_path(ROOT)
+    if stale_path is not None:
+        fail(f"obsolete production path reference is present in {stale_path}")
 
     for path in ROOT.rglob("*"):
         if any(part in IGNORED_PARTS for part in path.parts):

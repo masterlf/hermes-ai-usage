@@ -11,6 +11,7 @@ from unittest import mock
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
+HOST_CONTRACT = "unified-desktop-plugin-root-v1"
 INSTALLER_SPEC = importlib.util.spec_from_file_location(
     "install_release_unified_contract", ROOT / "scripts/install_release.py"
 )
@@ -31,14 +32,38 @@ PLUGIN_FILES = {
 
 class UnifiedPackageContractTests(unittest.TestCase):
     def test_repository_exposes_exact_runtime_package_shape(self):
-        self.assertFalse((ROOT / "runtime/dashboard").exists())
+        obsolete_path = Path("runtime") / "dashboard"
+        self.assertFalse((ROOT / obsolete_path).exists())
         for relative in PLUGIN_FILES:
             self.assertTrue((ROOT / relative).is_file(), relative)
 
     def test_codeowners_routes_the_canonical_dashboard_api(self):
         codeowners = (ROOT / ".github/CODEOWNERS").read_text(encoding="utf-8")
         self.assertIn("/dashboard/plugin_api.py @masterlf", codeowners.splitlines())
-        self.assertNotIn("/runtime/dashboard/plugin_api.py", codeowners)
+        obsolete_codeowner = "/" + (Path("runtime") / "dashboard/plugin_api.py").as_posix()
+        self.assertNotIn(obsolete_codeowner, codeowners)
+
+    def test_stale_production_path_invariant_scans_tests_without_self_triggering(self):
+        spec = importlib.util.spec_from_file_location(
+            "security_invariants_stale_path", ROOT / "scripts/security_invariants.py"
+        )
+        assert spec and spec.loader
+        security_invariants = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(security_invariants)
+        with tempfile.TemporaryDirectory() as temporary:
+            scan_root = Path(temporary)
+            (scan_root / "tests").mkdir()
+            (scan_root / "tests/test_contract.py").write_text(
+                'needle = "runtime" + "/dashboard"\n', encoding="utf-8"
+            )
+            (scan_root / "docs").mkdir()
+            stale = "runtime" + "/dashboard"
+            (scan_root / "docs/INSTALLATION.md").write_text(stale, encoding="utf-8")
+
+            self.assertEqual(
+                security_invariants.find_stale_production_path(scan_root),
+                Path("docs/INSTALLATION.md"),
+            )
 
     def test_release_docs_preserve_the_operator_action_boundary(self):
         boundary = (
@@ -145,12 +170,15 @@ class UnifiedLegacyMigrationContractTests(unittest.TestCase):
             {path.name for path in self.legacy_desktop.iterdir()}, {"old-desktop.txt"}
         )
 
+    def _install(self, backup_id):
+        return install_release.install(ROOT, self.home, backup_id, HOST_CONTRACT)
+
     def test_split_tree_migration_installs_one_tree_and_rolls_back_both(self):
         self._create_split_legacy()
         config_before = (self.home / "config.yaml").read_bytes()
         unrelated_before = (self.home / "plugins/other-plugin/keep.txt").read_bytes()
 
-        backups = install_release.install(ROOT, self.home, "pre-074")
+        backups = self._install("pre-074")
 
         installed = {
             path.relative_to(self.unified).as_posix()
@@ -183,7 +211,7 @@ class UnifiedLegacyMigrationContractTests(unittest.TestCase):
             mock.patch.object(install_release.os, "replace", side_effect=fail_retirement),
             self.assertRaisesRegex(OSError, "legacy retirement"),
         ):
-            install_release.install(ROOT, self.home, "failed-retirement")
+            self._install("failed-retirement")
 
         self._assert_old_split_state()
         self.assertEqual(
@@ -203,13 +231,13 @@ class UnifiedLegacyMigrationContractTests(unittest.TestCase):
             mock.patch.object(install_release.os, "replace", side_effect=fail_unified_stage),
             self.assertRaisesRegex(OSError, "unified stage swap"),
         ):
-            install_release.install(ROOT, self.home, "failed-stage")
+            self._install("failed-stage")
 
         self._assert_old_split_state()
 
     def test_rollback_failure_restores_installed_and_backup_state(self):
         self._create_split_legacy()
-        backups = install_release.install(ROOT, self.home, "rollback-failure")
+        backups = self._install("rollback-failure")
         real_replace = os.replace
 
         def fail_legacy_restore(source, destination):
@@ -230,28 +258,37 @@ class UnifiedLegacyMigrationContractTests(unittest.TestCase):
 
     def test_rejects_relative_home_unsafe_backup_id_and_existing_backup_object(self):
         with self.assertRaisesRegex(ValueError, "explicit absolute"):
-            install_release.install(ROOT, Path("relative-home"), "safe")
+            install_release.install(ROOT, Path("relative-home"), "safe", HOST_CONTRACT)
         with self.assertRaisesRegex(ValueError, "safe ASCII"):
-            install_release.install(ROOT, self.home, "../escape")
+            self._install("../escape")
 
         backup = self.home / "plugins/.ai-usage-monitor-unified.backup-collision"
         backup.parent.mkdir(parents=True, exist_ok=True)
         backup.write_bytes(b"unexpected object")
         with self.assertRaisesRegex(FileExistsError, "backup state"):
-            install_release.install(ROOT, self.home, "collision")
+            self._install("collision")
 
     def test_rejects_symlinked_home_and_legacy_destination(self):
         home_link = self.root / "home-link"
         home_link.symlink_to(self.home, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, "symlink"):
-            install_release.install(ROOT, home_link, "home-link")
+            install_release.install(ROOT, home_link, "home-link", HOST_CONTRACT)
 
         outside = self.root / "outside"
         outside.mkdir()
         self.legacy_desktop.parent.mkdir(parents=True)
         self.legacy_desktop.symlink_to(outside, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, "symlink"):
-            install_release.install(ROOT, self.home, "legacy-link")
+            self._install("legacy-link")
+
+    def test_rejects_unverified_host_contract_before_changing_split_tree(self):
+        self._create_split_legacy()
+
+        with self.assertRaisesRegex(ValueError, "host contract"):
+            install_release.install(ROOT, self.home, "unsupported-host", "legacy-desktop-only")
+
+        self._assert_old_split_state()
+        self.assertEqual(list((self.home / "plugins").glob("*.backup-*")), [])
 
 
 if __name__ == "__main__":
