@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: test lint security check
+.PHONY: test fuzz lint security check
 
 test:
 	$(PYTHON) -m unittest discover -s tests -v
@@ -8,6 +8,11 @@ test:
 	node --check runtime/dashboard/dist/index.js
 	node tests/test_dashboard_bundle.cjs
 	node tests/test_desktop_bundle.cjs
+	node tests/test_fuzz_config.cjs
+	$(MAKE) fuzz
+
+fuzz:
+	npm run fuzz --silent
 
 lint:
 	$(PYTHON) -m ruff check .
@@ -16,6 +21,7 @@ lint:
 security:
 	$(PYTHON) scripts/security_invariants.py
 	$(PYTHON) -m pip_audit -r requirements-dev.txt --require-hashes
+	npm audit --audit-level=high
 	zizmor .github/workflows --persona=pedantic
 
 check: test lint security

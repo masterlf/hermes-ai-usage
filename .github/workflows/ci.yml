@@ -39,27 +39,11 @@ jobs:
       - name: Install locked development dependencies
         run: python -m pip install --require-hashes -r requirements-dev.txt
 
-      - name: Run backend tests
-        run: python -m unittest discover -s tests -v
+      - name: Install locked JavaScript fuzz dependency without lifecycle scripts
+        run: npm ci --ignore-scripts
 
-      - name: Validate frontend bundles
-        run: |
-          node --check desktop/plugin.js
-          node --check runtime/dashboard/dist/index.js
-          node tests/test_dashboard_bundle.cjs
-          node tests/test_desktop_bundle.cjs
+      - name: Audit JavaScript dependencies
+        run: npm audit --audit-level=high
 
-      - name: Lint Python
-        run: python -m ruff check .
-
-      - name: Run Bandit
-        run: python -m bandit -c pyproject.toml -r runtime/dashboard
-
-      - name: Audit locked dependencies
-        run: python -m pip_audit -r requirements-dev.txt --require-hashes
-
-      - name: Verify security and privacy invariants
-        run: python scripts/security_invariants.py
-
-      - name: Audit GitHub Actions workflows
-        run: zizmor .github/workflows --persona=pedantic
+      - name: Run canonical checks, including bounded property fuzzing
+        run: make check
