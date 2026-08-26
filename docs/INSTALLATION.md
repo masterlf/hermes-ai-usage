@@ -6,8 +6,8 @@ This release targets the official unified Hermes plugin layout documented and im
 the installed Hermes source baseline. The canonical runtime ID and install directory are both
 `ai-usage-monitor`.
 
-Tested baseline (not a minimum-support claim): Hermes v0.20.5, upstream `1bbb6e5b`,
-installed/local source `981101239a064c020a9d18fc3b1060ae306934ed`, tested 2026-08-25.
+Tested baseline (not a minimum-support claim): Hermes v0.20.5, local source authority
+`981101239a064c020a9d18fc3b1060ae306934ed`, tested 2026-08-25.
 On that baseline, `apps/desktop/src/contrib/runtime-loader.ts` resolves both
 `$HERMES_HOME/desktop-plugins/<name>/plugin.js` and
 `$HERMES_HOME/plugins/<name>/desktop/plugin.js`. Unified-root entries are inventoried opt-in
@@ -26,15 +26,40 @@ Select the intended Hermes profile explicitly, resolve the release tag to its ex
 use the official installer pinned to that immutable commit:
 
 ```bash
+set -eu
 hermes profile list
 hermes profile show PROFILE_NAME
 export HERMES_HOME="/exact/Path/from-profile-show"
+test "$HERMES_HOME" = "$(realpath -e -- "$HERMES_HOME")"
 test -f "$HERMES_HOME/config.yaml"
+LEGACY_DESKTOP="$HERMES_HOME/desktop-plugins/ai-usage-monitor"
+UNIFIED="$HERMES_HOME/plugins/ai-usage-monitor"
+if [ -e "$LEGACY_DESKTOP" ] || [ -L "$LEGACY_DESKTOP" ]; then
+  printf '%s\n' "Legacy Desktop tree found; use the migration procedure below." >&2
+  exit 1
+fi
+if [ -e "$UNIFIED" ] || [ -L "$UNIFIED" ]; then
+  test -d "$UNIFIED" && test ! -L "$UNIFIED" || {
+    printf '%s\n' "Unified destination is not a regular directory; use the migration procedure below." >&2
+    exit 1
+  }
+  test "$(git -C "$UNIFIED" rev-parse --show-toplevel)" = "$(realpath -e -- "$UNIFIED")" || {
+    printf '%s\n' "Existing unified tree is not its own Git clone; use the migration procedure below." >&2
+    exit 1
+  }
+fi
 V074_SHA="$(gh api repos/masterlf/hermes-ai-usage/commits/v0.7.4 --jq .sha)"
 printf '%s\n' "$V074_SHA" | grep -Eq '^[0-9a-f]{40}$'
 hermes plugins install masterlf/hermes-ai-usage --ref "$V074_SHA" --enable
-test "$(git -C "$HERMES_HOME/plugins/ai-usage-monitor" rev-parse HEAD)" = "$V074_SHA"
+test "$(git -C "$UNIFIED" rev-parse HEAD)" = "$V074_SHA"
 ```
+
+These checks fail closed before installation. If the legacy standalone Desktop tree exists, or
+if the unified destination is a symlink, non-directory, non-Git/manual tree, or merely nested in
+some other Git worktree, stop and use
+[Legacy split-tree migration or deterministic manual fallback](#legacy-split-tree-migration-or-deterministic-manual-fallback).
+Do not run the direct Git install first, and do not broadly delete plugin directories: the
+migration preserves unrelated plugins and configuration.
 
 Hermes reads the root `plugin.yaml` and installs the repository as
 `$HERMES_HOME/plugins/ai-usage-monitor/`. The same tree contains the inert agent entry point,
@@ -158,15 +183,28 @@ rollback is deliberately unsupported because it can recreate contradictory inven
 
 ## Verify
 
+The following Desktop activation is required after both a fresh direct Git installation and a
+v0.7.2/v0.7.3 split-tree migration. `hermes plugins install --enable` and
+`hermes plugins enable` control the agent/Dashboard half; they do not activate the inventoried
+opt-in Desktop half.
+
 1. Confirm `hermes config check`, `hermes plugins doctor ai-usage-monitor --ci`, and
-   `hermes plugins list` succeed and show one enabled AI Usage inventory entry.
-2. Open `/ai-usage` in the authenticated Dashboard and AI Usage in Desktop.
-3. Confirm `/api/plugins/ai-usage-monitor/health` returns `ok: true` through the authenticated
+   `hermes plugins list` succeed and show one enabled agent/Dashboard inventory entry.
+2. Open Hermes Desktop **Settings → Plugins**. Under **Desktop plugins**, locate
+   **AI Usage Monitor**; choose **Rescan** if the row has not appeared yet. Inventory it before
+   activation and confirm its switch is off. If an upgrade shows it on, switch it off first.
+   Upgrading requires re-enabling this unified Desktop half because the old standalone copy's
+   enablement state is not authority for the new unified root.
+3. Explicitly switch it on. No Desktop reload or restart is required: on the tested host the
+   switch activates its contributions live.
+4. Only after activation, verify the AI Usage navigation/page and status-bar indicator in
+   Desktop, then open `/ai-usage` in the authenticated Dashboard.
+5. Confirm `/api/plugins/ai-usage-monitor/health` returns `ok: true` through the authenticated
    Dashboard session.
-4. Confirm `$HERMES_HOME/desktop-plugins/ai-usage-monitor` is absent after migration.
-5. Confirm unsupported quota providers, malformed responses, and unavailable history render as
+6. Confirm `$HERMES_HOME/desktop-plugins/ai-usage-monitor` is absent after migration.
+7. Confirm unsupported quota providers, malformed responses, and unavailable history render as
    unavailable, never fabricated zero.
-6. Confirm `state.db` bytes remain unchanged using the deployment's integrity process.
+8. Confirm `state.db` bytes remain unchanged using the deployment's integrity process.
 
 ## Remove
 

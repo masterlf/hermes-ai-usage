@@ -75,6 +75,53 @@ class UnifiedPackageContractTests(unittest.TestCase):
             source = (ROOT / relative).read_text(encoding="utf-8")
             self.assertIn(boundary, " ".join(source.split()), relative)
 
+    def test_release_docs_require_explicit_live_desktop_activation(self):
+        required = (
+            "Settings → Plugins",
+            "Desktop plugins",
+            "AI Usage Monitor",
+            "Rescan",
+            "No Desktop reload or restart is required",
+            "old standalone copy's enablement state is not authority for the new unified root",
+        )
+        for relative in ("README.md", "docs/INSTALLATION.md"):
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            prose = " ".join(source.split())
+            for marker in required:
+                self.assertIn(marker, prose, f"{relative}: {marker}")
+
+        installation = " ".join(
+            (ROOT / "docs/INSTALLATION.md").read_text(encoding="utf-8").split()
+        )
+        inventory = installation.index("confirm its switch is off")
+        activate = installation.index("switch it on")
+        verify = installation.index("status-bar indicator")
+        self.assertLess(inventory, activate)
+        self.assertLess(activate, verify)
+
+    def test_primary_git_install_fails_closed_on_legacy_or_manual_trees(self):
+        required = (
+            'test "$HERMES_HOME" = "$(realpath -e -- "$HERMES_HOME")"',
+            'LEGACY_DESKTOP="$HERMES_HOME/desktop-plugins/ai-usage-monitor"',
+            'UNIFIED="$HERMES_HOME/plugins/ai-usage-monitor"',
+            'if [ -e "$LEGACY_DESKTOP" ] || [ -L "$LEGACY_DESKTOP" ]; then',
+            'git -C "$UNIFIED" rev-parse --show-toplevel',
+            "Legacy split-tree migration or deterministic manual fallback",
+        )
+        for relative in ("README.md", "docs/INSTALLATION.md"):
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            for marker in required:
+                self.assertIn(marker, source, f"{relative}: {marker}")
+
+    def test_tested_baseline_uses_local_source_as_authority(self):
+        authority = "local source authority `981101239a064c020a9d18fc3b1060ae306934ed`"
+        for relative in ("README.md", "docs/INSTALLATION.md"):
+            source = (ROOT / relative).read_text(encoding="utf-8")
+            prose = " ".join(source.split())
+            self.assertIn("Tested baseline (not a minimum-support claim)", prose, relative)
+            self.assertIn(authority, prose, relative)
+            self.assertNotIn("1bbb6e5b", source, relative)
+
     def test_root_manifest_is_minimal_and_canonical(self):
         manifest = yaml.safe_load((ROOT / "plugin.yaml").read_text(encoding="utf-8"))
         self.assertEqual(manifest["name"], "ai-usage-monitor")

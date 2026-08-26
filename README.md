@@ -22,8 +22,8 @@ Merging or publishing v0.7.4 distributes artifacts only; neither action deploys,
 upgrades, or changes any Hermes installation. Installation or migration remains a separate,
 explicit operator action.
 
-Tested baseline (not a minimum-support claim): Hermes v0.20.5, upstream `1bbb6e5b`,
-local `981101239a064c020a9d18fc3b1060ae306934ed`, tested 2026-08-25.
+Tested baseline (not a minimum-support claim): Hermes v0.20.5, local source authority
+`981101239a064c020a9d18fc3b1060ae306934ed`, tested 2026-08-25.
 
 ## Features
 
@@ -109,18 +109,45 @@ docs/                                     Architecture, installation, privacy, t
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for complete installation,
 verification, upgrade, and removal instructions.
 
-The primary installation path resolves the `v0.7.4` tag to its exact 40-character commit SHA,
-then runs `hermes plugins install masterlf/hermes-ai-usage --ref "$V074_SHA" --enable` and
-verifies the installed clone's `HEAD`; see the complete commands in
-[docs/INSTALLATION.md](docs/INSTALLATION.md). Hermes installs the unified package at
-`$HERMES_HOME/plugins/ai-usage-monitor/`; that one tree is discovered by the agent, Dashboard,
-and Desktop hosts. Git clone installation is not covered by archive `SHA256SUMS` or attestation.
-For legacy split-tree migrations and offline/manual fallback, verify the exact `v0.7.4` archive,
-checksum, and provenance, then use the checked-in fail-closed installer. It requires an explicit
-canonical `HERMES_HOME` and positive unified-host-contract evidence, atomically replaces the
-unified tree, retires only the exact legacy standalone Desktop tree, keeps distinct rollback
-evidence, and restores the complete old state on failure. Configuration edits remain
-operator-owned.
+Before the primary Git install, select the profile with `hermes profile show PROFILE_NAME`, copy
+its exact home, and run this fail-closed preflight. Any legacy standalone Desktop tree or
+non-Git/manual unified destination must use
+[Legacy split-tree migration or deterministic manual fallback](docs/INSTALLATION.md#legacy-split-tree-migration-or-deterministic-manual-fallback)
+instead; do not delete either tree or unrelated plugins.
+
+```bash
+export HERMES_HOME="/exact/Path/from-profile-show"
+test "$HERMES_HOME" = "$(realpath -e -- "$HERMES_HOME")"
+test -f "$HERMES_HOME/config.yaml"
+LEGACY_DESKTOP="$HERMES_HOME/desktop-plugins/ai-usage-monitor"
+UNIFIED="$HERMES_HOME/plugins/ai-usage-monitor"
+if [ -e "$LEGACY_DESKTOP" ] || [ -L "$LEGACY_DESKTOP" ]; then
+  printf '%s\n' "Legacy Desktop tree found; use the migration procedure." >&2
+  exit 1
+fi
+if [ -e "$UNIFIED" ] || [ -L "$UNIFIED" ]; then
+  test -d "$UNIFIED" && test ! -L "$UNIFIED" || exit 1
+  test "$(git -C "$UNIFIED" rev-parse --show-toplevel)" = "$(realpath -e -- "$UNIFIED")" || {
+    printf '%s\n' "Existing unified tree is not its own Git clone; use the migration procedure." >&2
+    exit 1
+  }
+fi
+```
+
+The complete guide then resolves `v0.7.4` to an exact commit, installs it with
+`hermes plugins install ... --enable`, and verifies the installed clone's `HEAD`. That command
+enables the agent/Dashboard half only. For both a fresh Git install and a v0.7.2/v0.7.3
+split-tree migration, open Hermes Desktop **Settings → Plugins**, find **AI Usage Monitor** under
+**Desktop plugins**, choose **Rescan** if it is not inventoried yet, and confirm its switch is
+off. If an upgrade shows it on, switch it off first: the old standalone copy's enablement state
+is not authority for the new unified root. Then switch it on explicitly. No Desktop reload or
+restart is required; the tested host activates Desktop contributions live. Only then verify the
+AI Usage page and status-bar indicator.
+
+Git clone installation is not covered by archive `SHA256SUMS` or attestation. The manual
+migration verifies those controls, requires positive unified-host-contract evidence, swaps the
+two historical trees transactionally, preserves rollback evidence and configuration, and never
+removes unrelated plugins.
 
 ## Development
 
