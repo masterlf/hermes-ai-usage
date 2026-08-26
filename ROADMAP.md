@@ -6,7 +6,13 @@
 - Session-level token breakdown and short references searchable in retained local logs.
 - No prompt/message/tool content and no complete session identifier in API responses.
 
-## 0.4 — defensible per-turn attribution
+## Delivered in 0.7.3 — promotion hardening
+
+- Fail-closed profile path validation and globally collision-safe references.
+- Bounded/single-flight provider snapshots and explicit unavailable UI states.
+- Deterministic checksummed artifacts with provenance attestation.
+
+## Future — defensible per-turn attribution
 
 - Correlate provider calls to Hermes turn and session identifiers internally.
 - Persist usage metadata only, with configurable retention.

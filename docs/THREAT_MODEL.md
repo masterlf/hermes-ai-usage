@@ -12,7 +12,7 @@
 ## Adversaries
 
 - unauthenticated network users reaching a misconfigured Dashboard;
-- authenticated low-privilege users on a shared Dashboard;
+- authenticated machine operators (low-privilege shared Dashboard access is unsupported);
 - malicious or compromised provider responses;
 - malicious session metadata stored locally;
 - supply-chain attackers targeting development dependencies or GitHub Actions;
@@ -23,8 +23,9 @@
 1. Do not handle or expose provider credentials.
 2. Do not read or expose prompt/message/tool content.
 3. Do not mutate Hermes state or provider account state.
-4. Cross profile boundaries only after explicit All-profiles selection and only through
-   canonical, bounded, read-only database discovery.
+4. Treat first-party Dashboard users as trusted machine operators: clients initially request
+   All profiles, while the API defaults to current-profile scope. Every cross-profile read
+   uses canonical, bounded, read-only database discovery.
 5. Do not present local estimates as official remote quota.
 6. Do not introduce browser code-execution or data-exfiltration sinks.
 7. Keep build and automation permissions minimal and reproducible.
@@ -37,11 +38,11 @@
 | Credential exposure | Hermes account adapters; no credential parameters or response fields; error redaction |
 | Prompt/transcript disclosure | Static SQL allowlist; no message-table access; security invariant and regression tests |
 | State mutation | SQLite `mode=ro`; `query_only`; GET-only router; mutation test |
-| Cross-profile leakage | current scope remains default; canonical root; strict slugs; no symlink following; physical-DB deduplication; fail-closed duplicate-session detection; DB-home attribution; profile-isolation tests |
+| Cross-profile leakage | current API scope remains default; Dashboard principals are trusted machine operators; canonical root; strict slugs; no symlink following; physical-DB deduplication; fail-closed duplicate-session detection; DB-home attribution; profile-isolation tests |
 | SQL injection | static SQL with bound numeric parameters; FastAPI validation |
 | XSS / DOM injection | React text rendering; bounded strings; prohibited raw-HTML/eval sinks |
 | Browser credential leakage | host SDK clients only; no custom Authorization/cookies/storage/direct fetch |
-| Query DoS | bounded `days`, raw directory scan, profile/session-identity counts and combined rows; SQLite VM-step budget and timeout; provider cache |
+| Query DoS | bounded `days`, windows, raw directory scan, profile/session-identity counts and combined rows; SQLite VM-step budget and timeout; per-key single-flight provider cache |
 | Session correlation leakage | complete IDs removed before serialization; bounded collision-aware suffix; authenticated host surfaces only |
 | Confidential source/title semantics | exact surface enum; raw source/title never serialized; complete-payload regressions |
 | Lineage leakage/misclassification | category-only marker checks; branch/compression distinction; fail closed to `unknown` |
@@ -53,7 +54,8 @@
 
 ## Assumptions
 
-- Hermes Dashboard authentication and profile scoping are correctly configured.
+- Hermes Dashboard authentication is correctly configured; every authenticated principal is
+  a trusted machine operator. Separate auth plus `--isolated` is used for distinct exposure.
 - Hermes core provider adapters protect credentials and validate their own remote calls.
 - The local account running Hermes is trusted to read its own `state.db`.
 - A host administrator can modify the plugin or database and is outside the plugin's
@@ -76,6 +78,7 @@
 ## Explicitly unsupported
 
 - exposing `plugin_api.py` as a standalone unauthenticated FastAPI service;
+- shared low-privilege access to the machine-level Dashboard;
 - copying real `state.db` or provider responses into issues/tests;
 - editing the code to query prompt/message tables;
 - converting token totals into an alleged official subscription percentage.

@@ -10,6 +10,7 @@ const states = [];
 const calls = [];
 let holdNextUnfiltered = false;
 let resolveStaleHistory;
+let historyOverride;
 const snapshot = {
   account: {
     available: true,
@@ -21,21 +22,27 @@ const snapshot = {
 };
 const history = {
   history: {
+    available: true,
     days: 7,
     profile_scope: 'current',
-    totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 },
-    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 }],
+    provider_quota_scope: 'account_shared_not_attributed',
+    totals: { sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 },
+    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }],
     partial: true,
     series: {
       bucket: 'day',
       bucket_seconds: 86400,
+      timezone: 'UTC',
       points: [
         { bucket_start: 1784851200, sessions: 2, api_calls: 3, input_tokens: 12345, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 12415 },
         { bucket_start: 1784937600, sessions: 1, api_calls: 1, input_tokens: 10, output_tokens: 5, cache_read_tokens: 99990, cache_write_tokens: 1, reasoning_tokens: 2, total_tokens: 100006 },
         { bucket_start: 1785024000, sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 }
       ]
     },
-    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 119880, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }]
+    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 119880, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }],
+    row_count: 1,
+    rows_truncated: false,
+    selected_bucket_start: null
   }
 };
 const React = {
@@ -66,6 +73,7 @@ const sandbox = {
       fetchJSON: path => {
         calls.push(path);
         if (path.includes('/snapshot')) return Promise.resolve(snapshot);
+        if (historyOverride !== undefined) return Promise.resolve({ history: historyOverride });
         if (path.includes('bucket_start=')) {
           return Promise.resolve({ history: {
             ...history.history,
@@ -87,9 +95,9 @@ const sandbox = {
             ...history.history,
             profile_scope: 'all',
             profiles: [
-              { profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 },
-              { profile: 'alpha', sessions: 1, api_calls: 1, input_tokens: 20, output_tokens: 10, cache_read_tokens: 20, cache_write_tokens: 0, total_tokens: 50 },
-              { profile: 'idle', sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, total_tokens: 0 }
+              { profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 },
+              { profile: 'alpha', sessions: 1, api_calls: 1, input_tokens: 20, output_tokens: 10, cache_read_tokens: 20, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 50 },
+              { profile: 'idle', sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 }
             ]
           } });
         }
@@ -170,24 +178,64 @@ function contrastRatio(foreground, background) {
   const dashboardSource = fs.readFileSync('runtime/dashboard/dist/index.js', 'utf8');
   const manifest = JSON.parse(fs.readFileSync('runtime/dashboard/manifest.json', 'utf8'));
   const readme = fs.readFileSync('README.md', 'utf8');
-  if (manifest.version !== '0.7.2') throw new Error('dashboard manifest version is not 0.7.2');
-  if (!readme.includes('Current plugin version: **v0.7.2**')) throw new Error('README does not identify v0.7.2');
+  if (manifest.version !== '0.7.3') throw new Error('dashboard manifest version is not 0.7.3');
+  if (!readme.includes('Current plugin version: **v0.7.3**')) throw new Error('README does not identify v0.7.3');
   if (!readme.includes('non_cache_read_tokens = input_tokens + output_tokens + cache_write_tokens')) throw new Error('README does not document the neutral metric formula');
   if (!readme.includes('Desktop and Web Dashboard initially request `scope=all`')) throw new Error('README does not document the client scope default');
   const instrumentedSource = dashboardSource.replace(
     'registry.register("ai-usage-monitor", AIUsagePage);',
-    'window.__compositionOf = compositionOf; window.__quotaPercentages = quotaPercentages; window.__AccountCard = AccountCard; window.__ProfileBreakdown = ProfileBreakdown; window.__UsageChart = UsageChart; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
+    'window.__compositionOf = compositionOf; window.__quotaPercentages = quotaPercentages; window.__normalizeHistoryResponse = normalizeHistoryResponse; window.__AccountCard = AccountCard; window.__ProfileBreakdown = ProfileBreakdown; window.__UsageChart = UsageChart; window.__HistoryUnavailable = HistoryUnavailable; window.__text = text; registry.register("ai-usage-monitor", AIUsagePage);'
   );
   vm.runInNewContext(instrumentedSource, sandbox);
   const dashboardStyles = fs.readFileSync('runtime/dashboard/dist/style.css', 'utf8');
   const compositionOf = sandbox.window.__compositionOf;
   const quotaPercentages = sandbox.window.__quotaPercentages;
+  const normalizeHistoryResponse = sandbox.window.__normalizeHistoryResponse;
   const AccountCard = sandbox.window.__AccountCard;
   const ProfileBreakdown = sandbox.window.__ProfileBreakdown;
   const UsageChart = sandbox.window.__UsageChart;
   const textForTest = sandbox.window.__text;
   if (typeof compositionOf !== 'function') throw new Error('dashboard composition helper missing');
   if (typeof UsageChart !== 'function') throw new Error('dashboard UsageChart test export missing');
+  const zeroHistory = {
+    available: true,
+    days: 7,
+    profile_scope: 'all',
+    provider_quota_scope: 'account_shared_not_attributed',
+    totals: { sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 },
+    series: { bucket: 'day', bucket_seconds: 86400, timezone: 'UTC', points: [] },
+    rows: [],
+    profiles: [],
+    row_count: 0,
+    rows_truncated: false,
+    selected_bucket_start: null,
+    partial: false
+  };
+  const malformedHistories = [
+    {},
+    [],
+    'history',
+    { ...zeroHistory, available: 1 },
+    { ...zeroHistory, totals: {} },
+    { ...zeroHistory, totals: { ...zeroHistory.totals, input_tokens: Infinity } },
+    { ...zeroHistory, series: [] },
+    { ...zeroHistory, series: { ...zeroHistory.series, points: {} } },
+    { ...zeroHistory, series: { ...zeroHistory.series, points: [{}] } },
+    { ...zeroHistory, rows: {} },
+    { ...zeroHistory, profiles: {} },
+    { ...zeroHistory, profiles: [{}] }
+  ];
+  for (const fixture of malformedHistories) {
+    const normalized = normalizeHistoryResponse({ history: fixture });
+    if (normalized?.available !== false || Object.keys(normalized).length !== 1) {
+      throw new Error('dashboard accepted malformed history fixture: ' + String(fixture));
+    }
+  }
+  if (normalizeHistoryResponse({})?.available !== false || normalizeHistoryResponse({ history: null })?.available !== false) {
+    throw new Error('dashboard malformed successful history response was converted to zero usage');
+  }
+  if (normalizeHistoryResponse({ history: zeroHistory }) !== zeroHistory) throw new Error('dashboard valid zero history was rejected');
+  if (normalizeHistoryResponse(history) !== history.history) throw new Error('dashboard valid history response was rejected');
   for (const [fixture, expectedUsed, expectedRemaining] of [
     [{ remaining_percent: 97 }, 3, 97],
     [{ used_percent: 3 }, 3, 97],
@@ -213,7 +261,7 @@ function contrastRatio(foreground, background) {
   }
   const directRemainingTree = AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: 97, used_percent: 80, reset_at: '2026-07-29T01:07:13Z' }] }, t: textForTest() });
   if (!flatten(directRemainingTree).includes('3% utilisés') || !flatten(directRemainingTree).includes('Réinitialisation')) throw new Error('dashboard quota footer did not retain used/reset details');
-  for (const label of ['Critique 0–25 %', 'Faible 25–50 %', 'Modéré 50–75 %', 'Sain 75–100 %']) {
+  for (const label of ['Critique 0–<25 %', 'Faible 25–<50 %', 'Modéré 50–<75 %', 'Sain 75–100 %']) {
     if (!flatten(directRemainingTree).includes(label)) throw new Error('dashboard visible quota scale label missing: ' + label);
   }
   const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
@@ -251,10 +299,15 @@ function contrastRatio(foreground, background) {
   if (!/@media\s*\(forced-colors:\s*active\)/.test(dashboardStyles)) throw new Error('dashboard forced-colors support missing');
   const quotaScaleRule = dashboardStyles.match(/\.aum-progress-scale\s*\{([^}]*)\}/);
   const quotaMaskRule = dashboardStyles.match(/\.aum-progress-mask\s*\{([^}]*)\}/);
-  const fixedQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%)';
+  const fixedQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 25%, #ff9f43 25%, #ff9f43 50%, #f6d860 50%, #f6d860 75%, #4ade80 75%, #4ade80 100%)';
   if (!quotaScaleRule || !quotaScaleRule[1].includes(fixedQuotaGradient)) throw new Error('dashboard fixed quota gradient stops are missing or reordered');
   if (quotaScaleRule[1].includes('var(--color-primary)')) throw new Error('dashboard quota gradient regressed to host primary');
   if (!quotaMaskRule || !quotaMaskRule[1].includes('background: color-mix(in srgb, var(--color-muted) 60%, transparent)')) throw new Error('dashboard consumed mask does not restore the track color');
+  const unavailableHistory = sandbox.window.__HistoryUnavailable({ history: { available: false, reason: 'secret' }, error: false, t: textForTest() });
+  if (unavailableHistory.props.role !== 'alert' || !flatten(unavailableHistory).includes('Historique indisponible')) throw new Error('dashboard unavailable history is not an accessible generic alert');
+  if (flatten(unavailableHistory).includes('secret')) throw new Error('dashboard unavailable history reflected a backend reason');
+  if (!dashboardSource.includes('data.error || data.history && data.history.available === false')) throw new Error('dashboard transport and unavailable history states are not unified');
+  if (!dashboardSource.includes('(row.profile || "unknown") + ":" + (row.session_ref ||')) throw new Error('dashboard history keys are not profile-composite');
   for (const color of ['#ff5c5c', '#ff9f43', '#f6d860', '#4ade80']) {
     if (contrastRatio(color, '#041c1c') < 3) throw new Error('dashboard quota stop contrast is below 3:1: ' + color);
   }
@@ -291,13 +344,24 @@ function contrastRatio(foreground, background) {
   const initialHistoryCall = calls.find(path => path.includes('/history?'));
   if (!initialHistoryCall || !initialHistoryCall.includes('scope=all')) throw new Error('dashboard initial request is not all-profile: ' + calls.join(', '));
   const rendered = flatten(render());
-  if (!rendered.includes('v0.7.2')) throw new Error('dashboard visible plugin version missing');
+  if (!rendered.includes('v0.7.3')) throw new Error('dashboard visible plugin version missing');
   const renderedOrder = ['Utilisation des tokens', 'Consommation par profil', 'Sessions récentes'].map(label => rendered.indexOf(label));
   if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('dashboard chart/profile/recent order is incorrect: ' + renderedOrder);
   if (!rendered.includes('35% restants')) throw new Error('provider quota fallback was not rendered');
   if (!rendered.includes('65% utilisés')) throw new Error('provider used fallback was not rendered');
   if (!rendered.includes('gpt-test')) throw new Error('history row was not rendered: ' + rendered);
   if (!rendered.includes('Utilisation des tokens')) throw new Error('usage chart was not rendered: ' + rendered);
+  historyOverride = {};
+  effect();
+  await new Promise(resolve => setImmediate(resolve));
+  const malformedRendered = flatten(render());
+  if (!malformedRendered.includes('Historique indisponible')) throw new Error('dashboard malformed history did not render generic unavailable state');
+  for (const suppressed of ['Activité Hermes', 'Utilisation des tokens', 'Consommation par profil', 'Sessions récentes']) {
+    if (malformedRendered.includes(suppressed)) throw new Error('dashboard malformed history rendered protected section: ' + suppressed);
+  }
+  historyOverride = undefined;
+  effect();
+  await new Promise(resolve => setImmediate(resolve));
   if (!rendered.includes('Utilisation des tokens · Tous les profils · 2 profils consommateurs')) throw new Error('French dashboard initial all-profile ownership missing from chart heading: ' + rendered);
   if (!rendered.includes('Tokens hors lecture cache') || !rendered.includes('Tokens lus du cache') || !rendered.includes('Total brut')) throw new Error('French dashboard split token summary missing: ' + rendered);
   const initialScopeSelector = findFirst(render(), node => node.type === 'select' && node.props && node.props['aria-label']);

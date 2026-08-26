@@ -16,7 +16,10 @@ that separates three facts people often blur together:
 The plugin supports the native Hermes Desktop app and the Hermes Web Dashboard.
 It never reads prompt or message content.
 
-Current plugin version: **v0.7.2**.
+Current plugin version: **v0.7.3**.
+
+Tested baseline (not a minimum-support claim): Hermes v0.20.5, upstream `1bbb6e5b`,
+local `981101239a064c020a9d18fc3b1060ae306934ed`, tested 2026-08-25.
 
 ## Features
 
@@ -65,6 +68,8 @@ Key controls:
 
 - provider credentials remain inside Hermes adapters;
 - account snapshot cache is scoped by Hermes home/profile and provider;
+- per-key single-flight prevents duplicate concurrent provider snapshot fetches and uses
+  bounded waiter liveness with cleanup even when an owner aborts;
 - SQLite URI `mode=ro` plus `PRAGMA query_only=ON`;
 - static parameterized SQL; no mutation statements;
 - response allowlisting and bounded display strings;
@@ -98,24 +103,12 @@ docs/                                     Architecture, installation, privacy, t
 See [docs/INSTALLATION.md](docs/INSTALLATION.md) for complete installation,
 verification, upgrade, and removal instructions.
 
-Short version:
-
-```bash
-git clone https://github.com/masterlf/hermes-ai-usage.git
-cd hermes-ai-usage
-install -d ~/.hermes/plugins/ai-usage-monitor/dashboard/dist
-install -d ~/.hermes/desktop-plugins/ai-usage-monitor
-install -m 0644 runtime/dashboard/plugin_api.py ~/.hermes/plugins/ai-usage-monitor/dashboard/
-install -m 0644 runtime/dashboard/manifest.json ~/.hermes/plugins/ai-usage-monitor/dashboard/
-install -m 0644 runtime/dashboard/dist/index.js ~/.hermes/plugins/ai-usage-monitor/dashboard/dist/
-install -m 0644 runtime/dashboard/dist/style.css ~/.hermes/plugins/ai-usage-monitor/dashboard/dist/
-install -m 0644 desktop/plugin.js ~/.hermes/desktop-plugins/ai-usage-monitor/
-```
-
-Preserve existing configuration and add `ai-usage-monitor` to `plugins.enabled`
-in `~/.hermes/config.yaml`, then run `hermes config check`. Restart the Hermes
-backend and Dashboard from an external shell. Do not replace the existing enabled
-plugin list with a single value.
+Install only the exact `v0.7.3` release archive after verifying `SHA256SUMS` and its
+repo-and-workflow-scoped GitHub provenance attestation. The archive's checked-in Python
+installer requires an explicit canonical `HERMES_HOME`, atomically replaces exact Dashboard
+and Desktop trees, keeps distinct component backups, and rolls both back if either swap
+fails. Configuration edits remain separate. This repository is not a native
+`hermes plugins install` package.
 
 ## Development
 
@@ -150,10 +143,14 @@ History rows expose `surface`, `workload_type`, `profile`, `duration_seconds`, a
 The backend API retains `scope=current` as its request default and reads only the active
 profile when scope is omitted. Desktop and Web Dashboard initially request `scope=all`, and
 their selector preserves the chosen scope across period changes, bucket selection, and
-refresh. `scope=all` crosses the local profile boundary: the UI must be available only to
-users authorised to view every profile. The plugin does not implement a separate per-profile
-ACL: any caller allowed to reach this route can request `scope=all`, so the host/deployment
-owns that authorization boundary. All-profile responses include `partial`, `totals_complete`,
+refresh. Hermes documents the Dashboard as a machine-level management surface that can manage every
+local profile. Accordingly, every authenticated Dashboard principal must be treated as a
+trusted machine operator, and first-party Desktop/Web clients initially select All profiles.
+Shared low-privilege Dashboard access is unsupported. Operators requiring distinct exposure
+must use separate authentication and `--isolated` per-profile Dashboard servers. See the
+[official Dashboard documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard)
+and [official profile documentation](https://hermes-agent.nousresearch.com/docs/user-guide/profiles).
+The plugin does not invent a separate per-profile ACL. All-profile responses include `partial`, `totals_complete`,
 `profile_failures`, `profiles_considered`, `profiles_succeeded`, and `profiles_truncated`.
 Failures contain only profile slugs and fixed codes. Duplicate physical databases are read
 once. If distinct databases contain an equal full session ID, every affected database is

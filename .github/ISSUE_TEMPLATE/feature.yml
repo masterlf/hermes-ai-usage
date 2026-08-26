@@ -30,3 +30,4 @@ body:
       options:
         - label: The proposal does not require prompt/message/tool-content collection.
         - label: The proposal will not label local estimates as official provider quota.
+        - label: The proposal treats authenticated Dashboard principals as trusted machine operators; distinct exposure uses separate auth and isolated servers.

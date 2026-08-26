@@ -33,6 +33,7 @@ credentials*
 secrets*
 
 # Build / audit output
+/dist/
 dist-audit/
 *.sarif
 coverage.xml

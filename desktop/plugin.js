@@ -15,7 +15,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'ai-usage-monitor'
 const ROUTE = '/ai-usage'
-const VERSION = 'v0.7.2'
+const VERSION = 'v0.7.3'
 let pluginContext = null
 let chartInstance = 0
 
@@ -230,7 +230,7 @@ function Progress({ quotaWindow }) {
         'data-quota-gradient': 'fixed-scale',
         style: {
           width: '100%',
-          background: 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%)'
+          background: 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 25%, #ff9f43 25%, #ff9f43 50%, #f6d860 50%, #f6d860 75%, #4ade80 75%, #4ade80 100%)'
         }
       }),
       jsx('div', {
@@ -784,7 +784,7 @@ function HistoryCard({ history, selectedBucket }) {
                   }),
                   jsxs('span', { children: [mobileLabel(t('logsRef')), jsx('code', { className: 'select-all text-(--ui-text-secondary)', children: row.session_ref || '—' })] })
                 ],
-                key: row.session_ref || `${row.ended_at || row.started_at || 'session'}-${index}`
+                key: `${row.profile || 'unknown'}:${row.session_ref || `${row.ended_at || row.started_at || 'session'}-${index}`}`
               })
             })
           ]
@@ -792,6 +792,76 @@ function HistoryCard({ history, selectedBucket }) {
       }) : jsx('p', { className: 'mt-3 text-sm text-(--ui-text-tertiary)', children: t('noHistory') })
     ]
   })
+}
+
+function HistoryUnavailable({ history, error }) {
+  const t = usePluginI18n(ID)
+  if (!error && history?.available !== false) return null
+  return jsx('p', {
+    className: 'rounded-md border border-(--ui-danger) p-3 text-sm text-(--ui-text-primary)',
+    role: 'alert',
+    children: t('historyUnavailable')
+  })
+}
+
+const HISTORY_COUNTERS = ['sessions', 'api_calls', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens', 'total_tokens']
+
+function historyObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function historyCount(value) {
+  return Number.isSafeInteger(value) && value >= 0
+}
+
+function historyCounters(value) {
+  return historyObject(value) && HISTORY_COUNTERS.every(field => historyCount(value[field]))
+}
+
+function historyPoint(point) {
+  return historyCounters(point) && historyCount(point.bucket_start)
+}
+
+function historyProfile(profile) {
+  return historyCounters(profile) && typeof profile.profile === 'string' && profile.profile.length > 0 && profile.profile.length <= 64
+}
+
+function historyRow(row) {
+  return historyObject(row)
+    && historyCount(row.started_at)
+    && (row.ended_at === null || historyCount(row.ended_at))
+    && historyCount(row.duration_seconds)
+    && typeof row.is_active === 'boolean'
+    && historyCount(row.api_call_count)
+    && ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens', 'total_tokens'].every(field => historyCount(row[field]))
+    && ['model', 'provider', 'surface', 'source', 'workload_type'].every(field => typeof row[field] === 'string')
+    && (row.profile === null || typeof row.profile === 'string')
+    && (row.session_ref === null || typeof row.session_ref === 'string')
+}
+
+function validHistory(history) {
+  if (!historyObject(history) || history.available !== true) return false
+  if (!historyCount(history.days) || history.days < 1 || history.days > 90) return false
+  if (!['current', 'all'].includes(history.profile_scope)) return false
+  if (history.provider_quota_scope !== 'account_shared_not_attributed') return false
+  if (!historyCounters(history.totals)) return false
+  if (!historyObject(history.series)
+      || ![['hour', 3600], ['day', 86400]].some(shape => history.series.bucket === shape[0] && history.series.bucket_seconds === shape[1])
+      || history.series.timezone !== 'UTC'
+      || !Array.isArray(history.series.points)
+      || history.series.points.length > 2200
+      || !history.series.points.every(historyPoint)) return false
+  if (!Array.isArray(history.rows) || history.rows.length > 200 || !history.rows.every(historyRow)) return false
+  if (!Array.isArray(history.profiles) || history.profiles.length > 64 || !history.profiles.every(historyProfile)) return false
+  if (!historyCount(history.row_count) || typeof history.rows_truncated !== 'boolean') return false
+  if (history.selected_bucket_start !== null && !historyCount(history.selected_bucket_start)) return false
+  if (history.partial !== undefined && typeof history.partial !== 'boolean') return false
+  return true
+}
+
+function normalizeHistoryResponse(response) {
+  const history = response?.history
+  return validHistory(history) ? history : { available: false }
 }
 
 function UsagePage() {
@@ -803,6 +873,9 @@ function UsagePage() {
   const sessionQuery = useSessionUsage()
   const historyQuery = useHistory(days, selectedBucket, scope)
   const refreshing = accountQuery.isFetching || sessionQuery.isFetching || historyQuery.isFetching
+  const historyLoading = historyQuery.isLoading && !historyQuery.data
+  const history = historyLoading ? null : normalizeHistoryResponse(historyQuery.data)
+  const historyUnavailable = historyQuery.error || (!historyLoading && history.available === false)
 
   return jsxs('main', {
     className: 'h-full overflow-auto p-5',
@@ -852,7 +925,9 @@ function UsagePage() {
         ]
       }),
       accountQuery.error ? jsx('p', { className: 'mb-3 text-sm text-(--ui-text-tertiary)', children: t('loadError') }) : null,
-      historyQuery.data?.history?.partial ? jsx('p', { className: 'mb-3 text-sm text-(--ui-accent)', role: 'status', children: t('partialWarning') }) : null,
+      historyLoading ? jsx('p', { className: 'mb-3 text-sm text-(--ui-text-tertiary)', role: 'status', children: t('loading') }) : null,
+      historyUnavailable ? jsx(HistoryUnavailable, { history, error: historyQuery.error }) : null,
+      history?.partial ? jsx('p', { className: 'mb-3 text-sm text-(--ui-accent)', role: 'status', children: t('partialWarning') }) : null,
       jsxs('div', {
         className: 'grid gap-4 xl:grid-cols-2',
         children: [
@@ -860,10 +935,10 @@ function UsagePage() {
           jsx(SessionCard, { usage: sessionQuery.data, sessionId: sessionQuery.sessionId })
         ]
       }),
-      jsx('div', {
+      !historyLoading && !historyUnavailable ? jsx('div', {
         className: 'mt-4',
         children: jsx(UsageChart, {
-          history: historyQuery.data?.history,
+          history,
           days,
           selectedBucket,
           onDays: value => {
@@ -872,15 +947,15 @@ function UsagePage() {
           },
           onSelect: value => setSelectedBucket(current => current === value ? null : value)
         })
-      }),
-      historyQuery.data?.history?.profiles?.length ? jsx('div', {
-        className: 'mt-4',
-        children: jsx(ProfileBreakdown, { history: historyQuery.data.history })
       }) : null,
-      jsx('div', {
+      !historyLoading && !historyUnavailable && history?.profiles?.length ? jsx('div', {
         className: 'mt-4',
-        children: jsx(HistoryCard, { history: historyQuery.data?.history, selectedBucket })
-      }),
+        children: jsx(ProfileBreakdown, { history })
+      }) : null,
+      !historyLoading && !historyUnavailable ? jsx('div', {
+        className: 'mt-4',
+        children: jsx(HistoryCard, { history, selectedBucket })
+      }) : null,
       jsx('p', {
         className: 'mt-4 text-xs text-(--ui-text-quaternary)',
         children: t('dataNote')
@@ -931,9 +1006,9 @@ export default {
         remaining: value => `${value}% remaining`,
         remainingWord: 'remaining',
         quotaScale: 'Remaining allowance scale',
-        quotaCritical: 'Critical 0–25%',
-        quotaLow: 'Low 25–50%',
-        quotaModerate: 'Moderate 50–75%',
+        quotaCritical: 'Critical 0–<25%',
+        quotaLow: 'Low 25–<50%',
+        quotaModerate: 'Moderate 50–<75%',
         quotaHealthy: 'Healthy 75–100%',
         used: value => `${value}% used`,
         usedWord: 'used',
@@ -954,6 +1029,7 @@ export default {
         context: 'Current context',
         noActiveSession: 'No active session',
         noHistory: 'No recorded usage in this period.',
+        historyUnavailable: 'Usage history is unavailable. Refresh or restart the Hermes backend.',
         when: 'When',
         workload: 'Workload',
         modelProvider: 'Model · provider',
@@ -974,6 +1050,7 @@ export default {
         workload_branch: 'Branch', workload_continuation: 'Continuation',
         refresh: 'Refresh',
         refreshing: 'Refreshing…',
+        loading: 'Loading usage data…',
         loadError: 'Usage data could not be loaded. Refresh or restart the Hermes backend.',
         chipTip: (remaining, tokens) => `${remaining} remaining · ${tokens} tokens in active session`,
         dataNote: 'Quota percentages come from the provider API when available. Token counts come from Hermes/provider responses. They are related, but they are not interchangeable.',
@@ -1015,9 +1092,9 @@ export default {
         remaining: value => `${value} % restants`,
         remainingWord: 'restants',
         quotaScale: 'Échelle du quota restant',
-        quotaCritical: 'Critique 0–25 %',
-        quotaLow: 'Faible 25–50 %',
-        quotaModerate: 'Modéré 50–75 %',
+        quotaCritical: 'Critique 0–<25 %',
+        quotaLow: 'Faible 25–<50 %',
+        quotaModerate: 'Modéré 50–<75 %',
         quotaHealthy: 'Sain 75–100 %',
         used: value => `${value} % utilisés`,
         usedWord: 'utilisés',
@@ -1038,6 +1115,7 @@ export default {
         context: 'Contexte actuel',
         noActiveSession: 'Aucune session active',
         noHistory: 'Aucune consommation enregistrée sur cette période.',
+        historyUnavailable: 'Historique indisponible. Actualise ou redémarre le backend Hermes.',
         when: 'Date',
         workload: 'Charge',
         modelProvider: 'Modèle · fournisseur',
@@ -1058,6 +1136,7 @@ export default {
         workload_branch: 'Branche', workload_continuation: 'Continuation',
         refresh: 'Actualiser',
         refreshing: 'Actualisation…',
+        loading: 'Chargement de la consommation…',
         loadError: 'Les données de consommation n’ont pas pu être chargées. Actualise ou redémarre le backend Hermes.',
         chipTip: (remaining, tokens) => `${remaining} restants · ${tokens} tokens dans la session active`,
         dataNote: 'Les pourcentages viennent de l’API du fournisseur lorsqu’elle existe. Les tokens viennent de Hermes et des réponses du fournisseur. Les deux sont liés, mais ne sont pas interchangeables.',

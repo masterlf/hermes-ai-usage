@@ -27,7 +27,7 @@
 .aum-window-head { display: flex; justify-content: space-between; gap: .75rem; align-items: baseline; font-size: .86rem; }
 .aum-window-value { font-family: var(--font-mono, ui-monospace, monospace); font-weight: 700; }
 .aum-progress { position: relative; height: .58rem; margin-top: .45rem; overflow: hidden; border: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-muted) 60%, transparent); }
-.aum-progress-scale { position: absolute; inset: 0; background: linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%); }
+.aum-progress-scale { position: absolute; inset: 0; background: linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 25%, #ff9f43 25%, #ff9f43 50%, #f6d860 50%, #f6d860 75%, #4ade80 75%, #4ade80 100%); }
 .aum-progress-mask { position: absolute; inset-block: 0; background: color-mix(in srgb, var(--color-muted) 60%, transparent); transition: left .3s ease, width .3s ease; }
 .aum-progress.is-unavailable { height: auto; min-height: .58rem; border-style: dashed; padding: .15rem .35rem; color: var(--color-muted-foreground); font-size: .68rem; }
 .aum-window-foot { margin-top: .4rem; color: var(--color-muted-foreground); font-size: .72rem; }

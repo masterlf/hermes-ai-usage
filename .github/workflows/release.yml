@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-verify:
+    name: Verify exact tag and build release
+    if: github.repository == 'masterlf/hermes-ai-usage'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out immutable tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a valid tag on current origin/main
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]
+          test "$(git rev-parse --verify "$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
+          test "$RELEASE_TAG" = "v$(python3 -c 'import json; print(json.load(open("runtime/dashboard/manifest.json", encoding="utf-8"))["version"])')"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/main"
+
+      - name: Set up locked Python runtime
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install locked development dependencies
+        run: python3 -m pip install --require-hashes -r requirements-dev.txt
+
+      - name: Run canonical checks on the exact tagged SHA
+        run: make check
+
+      - name: Build deterministic release files
+        run: python3 scripts/build_release.py
+
+      - name: Revalidate release checksum
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
+
+      - name: Upload verified release files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-${{ github.sha }}
+          path: |
+            dist/hermes-ai-usage-${{ github.ref_name }}.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Attest and publish verified release files
+    needs: build-and-verify
+    if: github.repository == 'masterlf/hermes-ai-usage'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read # Download only the artifact produced by the required build job.
+      contents: write # Create the release and upload its checksum-verified files.
+      id-token: write # Obtain the OIDC identity used for provenance signing.
+      attestations: write # Publish provenance for the checksummed release artifact.
+    steps:
+      - name: Download exact verified release files
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-${{ github.sha }}
+          path: dist
+
+      - name: Revalidate artifact checksum
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Publish release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: >-
+          gh release create "$RELEASE_TAG"
+          "dist/hermes-ai-usage-$RELEASE_TAG.tar.gz"
+          "dist/SHA256SUMS"
+          --repo "$GITHUB_REPOSITORY"
+          --verify-tag
+          --generate-notes

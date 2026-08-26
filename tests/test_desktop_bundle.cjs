@@ -24,13 +24,22 @@ const useQuery = options => {
   if (key.includes('session')) return { data: { input: 1, output: 2, total: 3 }, refetch: () => {} };
   if (key.includes('history')) {
     globalThis.__historyOptions = options;
+    if (globalThis.__historyLoading) return { data: undefined, isLoading: true, isFetching: true, refetch: () => {} };
+    if (globalThis.__historyFixture !== undefined) return { data: { history: globalThis.__historyFixture }, refetch: () => {} };
     return { data: { history: {
-    totals: { input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170, api_calls: 3 },
+    available: true,
+    days: 7,
+    totals: { sessions: 2, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170, api_calls: 3 },
     profile_scope: 'current',
-    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, total_tokens: 170 }],
+    provider_quota_scope: 'account_shared_not_attributed',
+    profiles: [{ profile: 'security', sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }],
     partial: true,
-    series: { bucket: 'day', bucket_seconds: 86400, points: [{ bucket_start: 1784851200, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }] },
-    rows: [{ started_at: 1784900000, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 119880, cache_write_tokens: 0, total_tokens: 120000, session_ref: 'abcd12345678' }]
+    series: { bucket: 'day', bucket_seconds: 86400, timezone: 'UTC', points: [{ bucket_start: 1784851200, sessions: 2, api_calls: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 50, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 170 }] },
+    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 119880, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }],
+    row_count: 1,
+    rows_truncated: false,
+    selected_bucket_start: null,
+    partial: true
   } }, refetch: () => {} };
   }
   return { data: null, refetch: () => {} };
@@ -58,7 +67,7 @@ const useEffect = () => {};
 const jsx = (type, props) => ({ type, props });
 const jsxs = jsx;
 ` + source.slice(bodyStart + 2);
-source = source.replace('export default {', 'globalThis.__compositionOf = compositionOf; globalThis.__quotaPercentages = quotaPercentages; globalThis.__Progress = Progress; globalThis.__AccountCard = AccountCard; globalThis.__ProfileBreakdown = ProfileBreakdown; globalThis.__UsageChart = UsageChart; globalThis.__plugin = {');
+source = source.replace('export default {', 'globalThis.__compositionOf = compositionOf; globalThis.__quotaPercentages = quotaPercentages; globalThis.__normalizeHistoryResponse = typeof normalizeHistoryResponse === \'function\' ? normalizeHistoryResponse : undefined; globalThis.__Progress = Progress; globalThis.__AccountCard = AccountCard; globalThis.__ProfileBreakdown = ProfileBreakdown; globalThis.__UsageChart = UsageChart; globalThis.__HistoryUnavailable = HistoryUnavailable; globalThis.__UsagePage = UsagePage; globalThis.__plugin = {');
 if (!source.includes('bucket_start=')) throw new Error('Desktop bucket-specific history request missing');
 if (!source.includes("scope === 'all'") || !source.includes('&scope=all')) throw new Error('Desktop all-profile request missing');
 if (!source.includes('ResizeObserver')) throw new Error('Desktop chart is not container-aware');
@@ -70,7 +79,39 @@ const sandbox = { globalThis: {}, document: { documentElement: { lang: 'fr' } },
 vm.runInNewContext(source, sandbox);
 const compositionOf = sandbox.globalThis.__compositionOf;
 const quotaPercentages = sandbox.globalThis.__quotaPercentages;
+const normalizeHistoryResponse = sandbox.globalThis.__normalizeHistoryResponse;
 if (typeof compositionOf !== 'function') throw new Error('Desktop composition helper missing');
+if (typeof normalizeHistoryResponse !== 'function') throw new Error('Desktop history contract helper missing');
+const zeroHistory = {
+  available: true,
+  days: 7,
+  profile_scope: 'all',
+  provider_quota_scope: 'account_shared_not_attributed',
+  totals: { sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 },
+  series: { bucket: 'day', bucket_seconds: 86400, timezone: 'UTC', points: [] },
+  rows: [],
+  profiles: [],
+  row_count: 0,
+  rows_truncated: false,
+  selected_bucket_start: null,
+  partial: false
+};
+for (const fixture of [
+  {}, [], 'history',
+  { ...zeroHistory, available: 'true' },
+  { ...zeroHistory, totals: [] },
+  { ...zeroHistory, totals: { ...zeroHistory.totals, output_tokens: NaN } },
+  { ...zeroHistory, series: {} },
+  { ...zeroHistory, series: { ...zeroHistory.series, points: 'points' } },
+  { ...zeroHistory, series: { ...zeroHistory.series, points: [{}] } },
+  { ...zeroHistory, rows: null },
+  { ...zeroHistory, profiles: null },
+  { ...zeroHistory, profiles: [{}] }
+]) {
+  const normalized = normalizeHistoryResponse({ history: fixture });
+  if (normalized?.available !== false || Object.keys(normalized).length !== 1) throw new Error('Desktop accepted malformed history fixture: ' + String(fixture));
+}
+if (normalizeHistoryResponse({ history: zeroHistory }) !== zeroHistory) throw new Error('Desktop valid zero history was rejected');
 const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
 if (normal.nonCacheRead !== 40 || normal.rawTotal !== 100 || normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('Desktop composition math is incorrect');
 if (normal.shareTenths.join(',') !== '100,200,600,100') throw new Error('Desktop top-level ratios are incorrect: ' + normal.shareTenths);
@@ -156,7 +197,7 @@ for (const remaining of [0, 20, 40, 60, 80, 97, 100]) {
   if (!gradient || gradient.props.style.width !== '100%') throw new Error('Desktop quota gradient is not fixed to the full track');
   if (!mask || mask.props.style.left !== remaining + '%' || mask.props.style.width !== (100 - remaining) + '%') throw new Error('Desktop quota mask geometry is incorrect: ' + remaining);
 }
-const desktopQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 24%, #ff9f43 26%, #ff9f43 49%, #f6d860 51%, #f6d860 74%, #4ade80 76%, #4ade80 100%)';
+const desktopQuotaGradient = 'linear-gradient(90deg, #ff5c5c 0%, #ff5c5c 25%, #ff9f43 25%, #ff9f43 50%, #f6d860 50%, #f6d860 75%, #4ade80 75%, #4ade80 100%)';
 if (!source.includes(desktopQuotaGradient)) throw new Error('Desktop fixed quota gradient stops are missing or reordered');
 if (String(Progress).includes('bg-(--ui-accent)') || String(Progress).includes('bg-(--ui-danger)')) throw new Error('Desktop quota gradient regressed to a host semantic fill');
 for (const color of ['#ff5c5c', '#ff9f43', '#f6d860', '#4ade80']) {
@@ -168,9 +209,28 @@ for (const color of ['#ff5c5c', '#ff9f43', '#f6d860', '#4ade80']) {
 const AccountCard = sandbox.globalThis.__AccountCard;
 const directRemainingCard = resolveTree(AccountCard({ account: { available: true, provider: 'test', windows: [{ label: 'Session', remaining_percent: 97, used_percent: 80, reset_at: '2026-07-29T01:07:13Z' }] } }));
 if (!flatten(directRemainingCard).includes('3% used') || !flatten(directRemainingCard).includes('Resets')) throw new Error('Desktop quota footer did not retain used/reset details');
-for (const label of ['Critical 0–25%', 'Low 25–50%', 'Moderate 50–75%', 'Healthy 75–100%']) {
+for (const label of ['Critical 0–<25%', 'Low 25–<50%', 'Moderate 50–<75%', 'Healthy 75–100%']) {
   if (!flatten(directRemainingCard).includes(label)) throw new Error('Desktop visible quota scale label missing: ' + label);
 }
+const HistoryUnavailable = sandbox.globalThis.__HistoryUnavailable;
+const unavailableHistory = resolveTree(HistoryUnavailable({ history: { available: false, reason: 'secret' }, error: null }));
+if (unavailableHistory.props.role !== 'alert' || !flatten(unavailableHistory).includes('Usage history is unavailable')) throw new Error('Desktop unavailable history is not an accessible generic alert');
+if (flatten(unavailableHistory).includes('secret')) throw new Error('Desktop unavailable history reflected a backend reason');
+if (!source.includes("historyQuery.error || (!historyLoading && history.available === false)")) throw new Error('Desktop transport, malformed, and unavailable history states are not unified');
+if (!source.includes("`${row.profile || 'unknown'}:${row.session_ref ||")) throw new Error('Desktop history keys are not profile-composite');
+const UsagePage = sandbox.globalThis.__UsagePage;
+sandbox.globalThis.__historyLoading = true;
+const initialLoading = flatten(resolveTree(UsagePage()));
+sandbox.globalThis.__historyLoading = false;
+if (!initialLoading.includes('Loading usage data')) throw new Error('Desktop initial history loading state is not visible');
+if (initialLoading.includes('No recorded usage')) throw new Error('Desktop initial loading rendered no-usage copy');
+sandbox.globalThis.__historyFixture = {};
+const malformedPage = flatten(resolveTree(UsagePage()));
+if (!malformedPage.includes('Usage history is unavailable')) throw new Error('Desktop malformed history did not render generic unavailable state');
+for (const suppressed of ['Token usage', 'Usage by profile', 'Recent usage']) {
+  if (malformedPage.includes(suppressed)) throw new Error('Desktop malformed history rendered protected section: ' + suppressed);
+}
+sandbox.globalThis.__historyFixture = undefined;
 const ProfileBreakdown = sandbox.globalThis.__ProfileBreakdown;
 const sixProfiles = Array.from({ length: 6 }, (_, index) => ({ profile: 'profile-' + index, sessions: index, api_calls: index, input_tokens: index + 1 }));
 const profileFixture = resolveTree(ProfileBreakdown({ history: { profiles: sixProfiles } }));
@@ -242,7 +302,7 @@ if (restCalls[restCalls.length - 1].includes('scope=all')) throw new Error('Desk
 sandbox.globalThis.__setHarnessStateful(false);
 const tree = resolveTree(page.render());
 const rendered = flatten(tree);
-if (!rendered.includes('v0.7.2')) throw new Error('Desktop visible plugin version missing');
+if (!rendered.includes('v0.7.3')) throw new Error('Desktop visible plugin version missing');
 const renderedOrder = ['Token usage', 'Usage by profile', 'Recent usage'].map(label => rendered.indexOf(label));
 if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('Desktop chart/profile/recent order is incorrect: ' + renderedOrder);
 if (!rendered.includes('Token usage')) throw new Error('Desktop usage chart missing: ' + rendered);

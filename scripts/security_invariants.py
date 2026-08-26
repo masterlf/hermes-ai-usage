@@ -11,6 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 API = ROOT / "runtime/dashboard/plugin_api.py"
 JS_FILES = [ROOT / "desktop/plugin.js", ROOT / "runtime/dashboard/dist/index.js"]
+RELEASE_WORKFLOW = ROOT / ".github/workflows/release.yml"
+INSTALLER = ROOT / "scripts/install_release.py"
 FORBIDDEN_JS = {
     "innerHTML": "raw HTML sink",
     "outerHTML": "raw HTML sink",
@@ -130,6 +132,24 @@ def javascript_invariants() -> None:
 
 
 def repository_invariants() -> None:
+    workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    for required in (
+        'git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/main"',
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+        "python3 -m pip install --require-hashes -r requirements-dev.txt",
+        "make check",
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+        "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+        "actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f",
+    ):
+        if required not in workflow:
+            fail("release exact-SHA gate or privileged artifact handoff regressed")
+    installer = INSTALLER.read_text(encoding="utf-8")
+    for required in ("resolve(strict=True)", "lstat()", "os.replace", "except BaseException"):
+        if required not in installer:
+            fail("release installer path or transactional safety regressed")
+
     for path in ROOT.rglob("*"):
         if any(part in IGNORED_PARTS for part in path.parts):
             continue

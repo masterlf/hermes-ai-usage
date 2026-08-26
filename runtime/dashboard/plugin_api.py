@@ -29,8 +29,10 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_ACCOUNT_PROVIDERS = frozenset({"openai-codex", "anthropic", "openrouter"})
 _ACCOUNT_CACHE_TTL_SECONDS = 45.0
+_ACCOUNT_INFLIGHT_WAIT_SECONDS = 10.0
 _account_cache: dict[tuple[str, str], tuple[float, AccountUsageSnapshot | None]] = {}
 _account_cache_lock = threading.Lock()
+_account_inflight: dict[tuple[str, str], threading.Event] = {}
 _SAFE_PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _SAFE_PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _PROFILE_HOME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -77,6 +79,8 @@ def _utc_now_iso() -> str:
 
 def _clamp_percent(value: Any) -> float | None:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    if not math.isfinite(value):
         return None
     return round(max(0.0, min(100.0, float(value))), 2)
 
@@ -199,11 +203,31 @@ def _cached_account_snapshot(provider: str) -> AccountUsageSnapshot | None:
         cached = _account_cache.get(cache_key)
         if cached and now - cached[0] < _ACCOUNT_CACHE_TTL_SECONDS:
             return cached[1]
+        pending = _account_inflight.get(cache_key)
+        if pending is None:
+            pending = threading.Event()
+            _account_inflight[cache_key] = pending
+            owner = True
+        else:
+            owner = False
 
-    snapshot = _fetch_account_snapshot(provider)
-    with _account_cache_lock:
-        _account_cache[cache_key] = (now, snapshot)
-    return snapshot
+    if not owner:
+        if not pending.wait(timeout=_ACCOUNT_INFLIGHT_WAIT_SECONDS):
+            logger.warning("Account quota request wait timed out; returning unavailable")
+            return None
+        with _account_cache_lock:
+            cached = _account_cache.get(cache_key)
+            return cached[1] if cached else None
+
+    try:
+        snapshot = _fetch_account_snapshot(provider)
+        with _account_cache_lock:
+            _account_cache[cache_key] = (now, snapshot)
+        return snapshot
+    finally:
+        with _account_cache_lock:
+            _account_inflight.pop(cache_key, None)
+            pending.set()
 
 
 def _serialize_account(snapshot: AccountUsageSnapshot | None, provider: str) -> dict[str, Any]:
@@ -216,46 +240,52 @@ def _serialize_account(snapshot: AccountUsageSnapshot | None, provider: str) -> 
             "details": [],
         }
 
-    windows = []
-    for window in snapshot.windows:
-        used = _clamp_percent(window.used_percent)
-        windows.append(
-            {
-                "label": _safe_text(window.label, 80) or "Quota",
-                "used_percent": used,
-                "remaining_percent": None if used is None else round(100.0 - used, 2),
-                "reset_at": window.reset_at.isoformat() if window.reset_at else None,
-                "detail": _safe_text(window.detail),
-            }
-        )
+    try:
+        windows = []
+        for window in snapshot.windows[:8]:
+            used = _clamp_percent(window.used_percent)
+            windows.append(
+                {
+                    "label": _safe_text(window.label, 80) or "Quota",
+                    "used_percent": used,
+                    "remaining_percent": None if used is None else round(100.0 - used, 2),
+                    "reset_at": window.reset_at.isoformat() if window.reset_at else None,
+                    "detail": _safe_text(window.detail),
+                }
+            )
 
-    details = []
-    for detail in snapshot.details[:8]:
-        safe_detail = _safe_text(detail)
-        if safe_detail:
-            details.append(safe_detail)
+        details = []
+        for detail in snapshot.details[:8]:
+            safe_detail = _safe_text(detail)
+            if safe_detail:
+                details.append(safe_detail)
 
-    return {
-        "available": snapshot.available,
-        "provider": _safe_provider(snapshot.provider) or provider,
-        "source": _safe_text(snapshot.source, 80),
-        "title": _safe_text(snapshot.title, 120),
-        "plan": _safe_text(snapshot.plan, 80),
-        "fetched_at": snapshot.fetched_at.isoformat(),
-        "windows": windows,
-        "details": details,
-        "reason": _safe_text(snapshot.unavailable_reason),
-    }
+        return {
+            "available": bool(snapshot.available),
+            "provider": _safe_provider(snapshot.provider) or provider,
+            "source": _safe_text(snapshot.source, 80),
+            "title": _safe_text(snapshot.title, 120),
+            "plan": _safe_text(snapshot.plan, 80),
+            "fetched_at": snapshot.fetched_at.isoformat(),
+            "windows": windows,
+            "details": details,
+            "reason": _safe_text(snapshot.unavailable_reason),
+        }
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        logger.warning("Account quota serialization failed (%s)", type(exc).__name__)
+        return {
+            "available": False,
+            "provider": provider,
+            "reason": "The provider snapshot was unavailable.",
+            "windows": [],
+            "details": [],
+        }
 
 
 def _readonly_connection(db_path: Path) -> sqlite3.Connection:
     encoded = quote(str(db_path.resolve()), safe="/")
     connection = sqlite3.connect(f"file:{encoded}?mode=ro", uri=True, timeout=5.0)
     connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA query_only=ON")
-    if connection.execute("PRAGMA query_only").fetchone()[0] != 1:
-        connection.close()
-        raise sqlite3.OperationalError("query-only mode unavailable")
     remaining = _SQL_PROGRESS_STEPS
 
     def progress() -> int:
@@ -264,6 +294,10 @@ def _readonly_connection(db_path: Path) -> sqlite3.Connection:
         return 1 if remaining <= 0 else 0
 
     connection.set_progress_handler(progress, 1000)
+    connection.execute("PRAGMA query_only=ON")
+    if connection.execute("PRAGMA query_only").fetchone()[0] != 1:
+        connection.close()
+        raise sqlite3.OperationalError("query-only mode unavailable")
     return connection
 
 
@@ -376,10 +410,8 @@ def _discover_profile_databases() -> tuple[list[tuple[str, Path]], list[dict[str
     return candidates, failures, truncated
 
 
-def _session_identities(db_path: Path, days: int) -> tuple[set[str] | None, str | None]:
-    """Read bounded full IDs transiently so copied histories fail closed."""
-    now = time.time()
-    cutoff = now - (days * 86400)
+def _session_identities(db_path: Path) -> tuple[set[str] | None, str | None]:
+    """Read all retained IDs within a hard ceiling so copied histories fail closed."""
     connection: sqlite3.Connection | None = None
     try:
         connection = _readonly_connection(db_path)
@@ -389,17 +421,9 @@ def _session_identities(db_path: Path, days: int) -> tuple[set[str] | None, str 
         rows = connection.execute(
             """SELECT id
                FROM sessions
-               WHERE COALESCE(ended_at, started_at) >= ?
-                 AND COALESCE(ended_at, started_at) <= ?
-                 AND (
-                     MAX(COALESCE(input_tokens, 0), 0)
-                     + MAX(COALESCE(output_tokens, 0), 0)
-                     + MAX(COALESCE(cache_read_tokens, 0), 0)
-                     + MAX(COALESCE(cache_write_tokens, 0), 0)
-                 ) > 0
                ORDER BY id
                LIMIT ?""",
-            (cutoff, now, _MAX_SESSION_IDENTITIES + 1),
+            (_MAX_SESSION_IDENTITIES + 1,),
         ).fetchall()
         if len(rows) > _MAX_SESSION_IDENTITIES:
             return None, "session_identity_scan_truncated"
@@ -461,6 +485,22 @@ def _global_session_ref_collisions(
             reference = session_id[-width:]
             if reference in references:
                 counts[width][reference] += 1
+    return {
+        width: {reference for reference, count in references.items() if count > 1}
+        for width, references in counts.items()
+    }
+
+
+def _session_ref_collisions_for_ids(session_ids: list[str]) -> dict[int, set[str]]:
+    """Find suffix collisions across already bounded, transient full identities."""
+    counts: dict[int, dict[str, int]] = {width: {} for width in _SESSION_REF_WIDTHS}
+    for session_id in session_ids:
+        for width in _SESSION_REF_WIDTHS:
+            if width > len(session_id) - 4:
+                continue
+            reference = session_id[-width:]
+            if _SAFE_SESSION_REF_RE.fullmatch(reference):
+                counts[width][reference] = counts[width].get(reference, 0) + 1
     return {
         width: {reference for reference, count in references.items() if count > 1}
         for width, references in counts.items()
@@ -592,6 +632,7 @@ def _token_history(
     db_path: Path | None = None,
     profile_identity: str | None = None,
     use_stored_profile: bool = True,
+    global_collisions_override: dict[int, set[str]] | None = None,
 ) -> dict[str, Any]:
     db_path = db_path or Path(get_hermes_home()) / "state.db"
     now = time.time()
@@ -718,7 +759,12 @@ def _token_history(
             ).fetchall()
         ]
         returned_session_ids = [str(row.get("id") or "") for row in raw_rows]
-        global_collisions = _global_session_ref_collisions(connection, returned_session_ids)
+        local_collisions = _global_session_ref_collisions(connection, returned_session_ids)
+        global_collisions = {
+            width: local_collisions.get(width, set())
+            | (global_collisions_override or {}).get(width, set())
+            for width in _SESSION_REF_WIDTHS
+        }
     except (sqlite3.Error, OSError) as exc:
         logger.warning("Token history query failed (%s)", type(exc).__name__)
         return {
@@ -828,11 +874,35 @@ def _current_profile_history(
     limit: int,
     bucket_start: int | None = None,
 ) -> dict[str, Any]:
+    if bucket_start is not None:
+        now = time.time()
+        bucket_seconds = _history_series_shape(days)["bucket_seconds"]
+        first_bucket = int((now - days * 86400) // bucket_seconds) * bucket_seconds
+        last_bucket = int(now // bucket_seconds) * bucket_seconds
+        if (
+            bucket_start % bucket_seconds != 0
+            or bucket_start < first_bucket - bucket_seconds
+            or bucket_start > last_bucket
+        ):
+            raise ValueError("invalid bucket")
     try:
         db_path = Path(get_hermes_home()) / "state.db"
     except (OSError, RuntimeError, TypeError, ValueError):
         db_path = Path("/__hermes_profile_unavailable__/state.db")
     profile = _current_profile_identity(db_path)
+    if profile is None:
+        return {
+            "available": False,
+            "reason": "Hermes token history could not be read.",
+            "rows": [],
+            "row_count": 0,
+            "rows_truncated": False,
+            "selected_bucket_start": bucket_start,
+            "totals": {},
+            "series": _history_series_shape(days),
+            "profile_scope": "current",
+            "provider_quota_scope": "account_shared_not_attributed",
+        }
     payload = _token_history(
         days,
         limit,
@@ -859,7 +929,7 @@ def _all_profiles_history(days: int, limit: int, bucket_start: int | None = None
     identity_sets: dict[str, set[str]] = {}
     verified_candidates: list[tuple[str, Path]] = []
     for profile, db_path in candidates:
-        identities, failure_code = _session_identities(db_path, days)
+        identities, failure_code = _session_identities(db_path)
         if failure_code:
             failures.append({"profile": profile, "code": failure_code})
         else:
@@ -887,6 +957,15 @@ def _all_profiles_history(days: int, limit: int, bucket_start: int | None = None
             if candidate[0] not in ambiguous_profiles
         ]
 
+    global_collisions = _session_ref_collisions_for_ids(
+        [
+            session_id
+            for profile, identities in identity_sets.items()
+            if profile not in ambiguous_profiles
+            for session_id in identities
+        ]
+    )
+
     healthy: list[tuple[str, dict[str, Any]]] = []
     for profile, db_path in verified_candidates:
         payload = _token_history(
@@ -895,6 +974,7 @@ def _all_profiles_history(days: int, limit: int, bucket_start: int | None = None
             bucket_start,
             db_path=db_path,
             profile_identity=profile,
+            global_collisions_override=global_collisions,
         )
         if payload.get("available"):
             healthy.append((profile, payload))

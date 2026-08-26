@@ -9,8 +9,10 @@ From Hermes provider adapters:
 - quota window label, utilization, remaining percentage, reset time, and bounded detail;
 - fetch timestamp and bounded account-usage details.
 
-From the active Hermes profile's `sessions` table by default, or from the canonical default
-and validated named profile databases after the user explicitly selects All profiles:
+From the active Hermes profile's `sessions` table for the API's default current scope, or from
+the canonical default and validated named profile databases for `scope=all`. The first-party
+Desktop and Web clients initially request All profiles because Dashboard principals are
+trusted machine operators:
 
 - raw source transiently, only to map it to an exact allowlisted `surface` enum;
 - lineage marker presence as booleans, only to derive a bounded `workload_type` enum;
@@ -37,7 +39,7 @@ and validated named profile databases after the user explicitly selects All prof
 
 The API returns only the final 12 characters of a session identifier as `session_ref`.
 The suffix is extended to 16 or 20 characters when needed to avoid a collision across
-the complete sessions table. A reference is omitted if it would equal the complete
+every healthy database included in an All-profiles response. A reference is omitted if it would equal the complete
 identifier or leave fewer than four characters hidden. The complete identifier is
 removed before serialization. This reference is
 operational metadata, not anonymisation: authorised users can search it in retained
@@ -48,7 +50,8 @@ Hermes logs, so shared Dashboard access must remain restricted.
 The plugin creates no database and writes no browser storage. It reads existing Hermes
 usage records according to the retention policy of Hermes itself. Account snapshots are
 held in process memory for 45 seconds and scoped to the active Hermes home/profile.
-History periods are limited to 90 days, eligible profiles to 64, and the combined session
+History periods are limited to 90 days, eligible profiles to 64, provider windows/details
+to eight each, and the combined session
 list to 200 rows per request. Raw profile-directory enumeration and the transient per-profile
 session-identity integrity scan have fixed ceilings. Each database query has a fixed SQLite
 VM-step budget. Duplicate physical databases are queried once. Distinct databases sharing a
@@ -66,8 +69,11 @@ arbitrary outbound URL feature.
 
 ## Shared deployments
 
-Usage metadata can reveal models, activity timing, and interaction surfaces. Treat the
-Dashboard as sensitive operational tooling, enforce Hermes authentication, restrict
-network exposure, and provide All-profiles access only to users authorised for every local profile.
+Usage metadata can reveal models, activity timing, and interaction surfaces. Official Hermes
+documentation defines the Dashboard as a machine-level management surface for every local
+profile. Treat every authenticated principal as a trusted machine operator; shared
+low-privilege Dashboard access is unsupported. Use separate authentication and `--isolated`
+servers when operators require distinct exposure. See
+https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard.
 Safe enums, profile names, timestamps, token volume, and suffix references remain
 correlatable operational metadata; they are minimised, not anonymised.
