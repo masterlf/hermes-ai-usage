@@ -5,6 +5,13 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-08-27
+
+### Fixed
+
+- Web Dashboard and Desktop history validation now accepts finite nonnegative fractional Unix
+  timestamps from the backend while retaining integer-only validation for counts and buckets.
+
 ## [0.7.4] - 2026-08-26
 
 ### Changed
@@ -190,7 +197,8 @@ This project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Read-only provider-quota snapshots and seven-day token history.
 - French and English UI text.
 
-[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.5...HEAD
+[0.7.5]: https://github.com/masterlf/hermes-ai-usage/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.4
 [0.7.3]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.3
 [0.7.2]: https://github.com/masterlf/hermes-ai-usage/releases/tag/v0.7.2

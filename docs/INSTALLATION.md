@@ -16,7 +16,7 @@ exercises loading and removal of the unified Desktop half. Retiring the duplicat
 standalone tree is therefore valid only on this baseline or on a host independently verified to
 expose the same unified-root contract.
 
-Merging or publishing v0.7.4 distributes artifacts only; neither action deploys, restarts,
+Merging or publishing v0.7.5 distributes artifacts only; neither action deploys, restarts,
 upgrades, or changes any Hermes installation. Installation or migration remains a separate,
 explicit operator action.
 
@@ -63,10 +63,10 @@ if [ -e "$UNIFIED" ] || [ -L "$UNIFIED" ]; then
     exit 1
   }
 fi
-V074_SHA="$(gh api repos/masterlf/hermes-ai-usage/commits/v0.7.4 --jq .sha)"
-printf '%s\n' "$V074_SHA" | grep -Eq '^[0-9a-f]{40}$'
-hermes plugins install masterlf/hermes-ai-usage --ref "$V074_SHA" --enable
-test "$(git -C "$UNIFIED" rev-parse HEAD)" = "$V074_SHA"
+V075_SHA="$(gh api repos/masterlf/hermes-ai-usage/commits/v0.7.5 --jq .sha)"
+printf '%s\n' "$V075_SHA" | grep -Eq '^[0-9a-f]{40}$'
+hermes plugins install masterlf/hermes-ai-usage --ref "$V075_SHA" --enable
+test "$(git -C "$UNIFIED" rev-parse HEAD)" = "$V075_SHA"
 ```
 
 These checks fail closed before installation. An absent regular plugin root is allowed because
@@ -162,11 +162,11 @@ $HERMES_HOME/plugins/ai-usage-monitor/
 $HERMES_HOME/desktop-plugins/ai-usage-monitor/
 ```
 
-Download the exact v0.7.4 release and verify its checksum and provenance before extraction:
+Download the exact v0.7.5 release and verify its checksum and provenance before extraction:
 
 ```bash
 set -eu
-VERSION=v0.7.4
+VERSION=v0.7.5
 WORKDIR="$(mktemp -d)"
 cd "$WORKDIR"
 gh release download "$VERSION" --repo masterlf/hermes-ai-usage \
@@ -195,7 +195,7 @@ Stop affected Hermes and Desktop processes, recording exactly which processes we
 Use a unique safe backup identifier and the explicit canonical profile home discovered above:
 
 ```bash
-BACKUP_ID="pre-v0.7.4"
+BACKUP_ID="pre-v0.7.5"
 python3 scripts/install_release.py \
   --hermes-home "$HERMES_HOME" \
   --backup-id "$BACKUP_ID" \

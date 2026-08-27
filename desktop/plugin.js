@@ -15,7 +15,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'ai-usage-monitor'
 const ROUTE = '/ai-usage'
-const VERSION = 'v0.7.4'
+const VERSION = 'v0.7.5'
 let pluginContext = null
 let chartInstance = 0
 
@@ -814,6 +814,10 @@ function historyCount(value) {
   return Number.isSafeInteger(value) && value >= 0
 }
 
+function historyTimestampNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
 function historyCounters(value) {
   return historyObject(value) && HISTORY_COUNTERS.every(field => historyCount(value[field]))
 }
@@ -828,8 +832,8 @@ function historyProfile(profile) {
 
 function historyRow(row) {
   return historyObject(row)
-    && historyCount(row.started_at)
-    && (row.ended_at === null || historyCount(row.ended_at))
+    && historyTimestampNumber(row.started_at)
+    && (row.ended_at === null || historyTimestampNumber(row.ended_at))
     && historyCount(row.duration_seconds)
     && typeof row.is_active === 'boolean'
     && historyCount(row.api_call_count)

@@ -40,7 +40,7 @@ class UnifiedPackageContractTests(unittest.TestCase):
         end = source.index("```", start)
         block = source[start:end].strip()
         block = block[block.index('export HERMES_HOME="'):]
-        return block.split('V074_SHA="', 1)[0]
+        return block.split('V075_SHA="', 1)[0]
 
     def _run_primary_preflight(self, relative: str, home: Path) -> subprocess.CompletedProcess[str]:
         script = self._primary_preflight(relative).replace(
@@ -90,7 +90,7 @@ class UnifiedPackageContractTests(unittest.TestCase):
 
     def test_release_docs_preserve_the_operator_action_boundary(self):
         boundary = (
-            "Merging or publishing v0.7.4 distributes artifacts only; neither action deploys, "
+            "Merging or publishing v0.7.5 distributes artifacts only; neither action deploys, "
             "restarts, upgrades, or changes any Hermes installation. Installation or migration "
             "remains a separate, explicit operator action."
         )
@@ -221,7 +221,7 @@ class UnifiedPackageContractTests(unittest.TestCase):
     def test_root_manifest_is_minimal_and_canonical(self):
         manifest = yaml.safe_load((ROOT / "plugin.yaml").read_text(encoding="utf-8"))
         self.assertEqual(manifest["name"], "ai-usage-monitor")
-        self.assertEqual(manifest["version"], "0.7.4")
+        self.assertEqual(manifest["version"], "0.7.5")
         self.assertEqual(manifest["manifest_version"], 1)
         self.assertEqual(manifest["api_version"], 1)
         self.assertEqual(manifest["author"], "BlueTeamForge")
@@ -257,21 +257,21 @@ class UnifiedPackageContractTests(unittest.TestCase):
     def test_current_release_identity_is_coherent(self):
         self.assertEqual(
             yaml.safe_load((ROOT / "plugin.yaml").read_text(encoding="utf-8"))["version"],
-            "0.7.4",
+            "0.7.5",
         )
         self.assertEqual(
             json.loads((ROOT / "dashboard/manifest.json").read_text(encoding="utf-8"))[
                 "version"
             ],
-            "0.7.4",
+            "0.7.5",
         )
         expected = {
-            "desktop/plugin.js": "const VERSION = 'v0.7.4'",
-            "dashboard/dist/index.js": 'const VERSION = "v0.7.4"',
-            "scripts/build_release.py": 'VERSION = "0.7.4"',
-            "README.md": "Current plugin version: **v0.7.4**",
-            "CHANGELOG.md": "## [0.7.4] - 2026-08-26",
-            "docs/INSTALLATION.md": "VERSION=v0.7.4",
+            "desktop/plugin.js": "const VERSION = 'v0.7.5'",
+            "dashboard/dist/index.js": 'const VERSION = "v0.7.5"',
+            "scripts/build_release.py": 'VERSION = "0.7.5"',
+            "README.md": "Current plugin version: **v0.7.5**",
+            "CHANGELOG.md": "## [0.7.5] - 2026-08-27",
+            "docs/INSTALLATION.md": "VERSION=v0.7.5",
         }
         for relative, marker in expected.items():
             self.assertIn(marker, (ROOT / relative).read_text(encoding="utf-8"), relative)

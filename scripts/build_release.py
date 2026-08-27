@@ -10,7 +10,7 @@ import json
 import tarfile
 from pathlib import Path
 
-VERSION = "0.7.4"
+VERSION = "0.7.5"
 FILES = (
     "plugin.yaml",
     "__init__.py",

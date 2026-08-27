@@ -164,6 +164,10 @@ const counter = fc.oneof(
   fc.integer({ min: 0, max: 1_000_000_000 }),
   fc.constantFrom(0, 1, Number.MAX_SAFE_INTEGER)
 );
+const timestamp = fc.oneof(
+  counter,
+  fc.double({ min: 0, max: Number.MAX_VALUE, noNaN: true, noDefaultInfinity: true })
+);
 const counters = fc.record({
   sessions: counter,
   api_calls: counter,
@@ -189,8 +193,8 @@ const point = fc.record({ bucket_start: counter }).chain(base =>
 const profile = fc.tuple(hostileString.filter(value => value.length > 0 && value.length <= 64), counters)
   .map(([name, values]) => ({ profile: name, ...values }));
 const row = fc.record({
-  started_at: counter,
-  ended_at: fc.oneof(fc.constant(null), counter),
+  started_at: timestamp,
+  ended_at: fc.oneof(fc.constant(null), timestamp),
   duration_seconds: counter,
   is_active: fc.boolean(),
   api_call_count: counter,
