@@ -20,6 +20,7 @@ const snapshot = {
     details: []
   }
 };
+const productionHistoryRow = JSON.parse('{"started_at":1787765507.2376719,"ended_at":1787765632.9876542,"model":"gpt-test","provider":"openai-codex","surface":"cli","source":"cli","workload_type":"subagent","profile":"security","duration_seconds":125,"is_active":false,"api_call_count":3,"input_tokens":100,"output_tokens":20,"cache_read_tokens":119880,"cache_write_tokens":0,"reasoning_tokens":5,"total_tokens":120000,"session_ref":"abcd12345678"}');
 const history = {
   history: {
     available: true,
@@ -39,7 +40,7 @@ const history = {
         { bucket_start: 1785024000, sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 }
       ]
     },
-    rows: [{ started_at: 1784900000, ended_at: 1784900010, model: 'gpt-test', provider: 'openai-codex', surface: 'cli', source: 'cli', workload_type: 'subagent', profile: 'security', duration_seconds: 125, is_active: false, api_call_count: 3, input_tokens: 100, output_tokens: 20, cache_read_tokens: 119880, cache_write_tokens: 0, reasoning_tokens: 5, total_tokens: 120000, session_ref: 'abcd12345678' }],
+    rows: [{ ...productionHistoryRow, started_at: 1784900000, ended_at: 1784900010 }],
     row_count: 1,
     rows_truncated: false,
     selected_bucket_start: null
@@ -178,8 +179,8 @@ function contrastRatio(foreground, background) {
   const dashboardSource = fs.readFileSync('dashboard/dist/index.js', 'utf8');
   const manifest = JSON.parse(fs.readFileSync('dashboard/manifest.json', 'utf8'));
   const readme = fs.readFileSync('README.md', 'utf8');
-  if (manifest.version !== '0.7.4') throw new Error('dashboard manifest version is not 0.7.4');
-  if (!readme.includes('Current plugin version: **v0.7.4**')) throw new Error('README does not identify v0.7.4');
+  if (manifest.version !== '0.7.5') throw new Error('dashboard manifest version is not 0.7.5');
+  if (!readme.includes('Current plugin version: **v0.7.5**')) throw new Error('README does not identify v0.7.5');
   if (!readme.includes('non_cache_read_tokens = input_tokens + output_tokens + cache_write_tokens')) throw new Error('README does not document the neutral metric formula');
   if (!readme.includes('Desktop and Web Dashboard initially request `scope=all`')) throw new Error('README does not document the client scope default');
   const instrumentedSource = dashboardSource.replace(
@@ -235,6 +236,30 @@ function contrastRatio(foreground, background) {
     throw new Error('dashboard malformed successful history response was converted to zero usage');
   }
   if (normalizeHistoryResponse({ history: zeroHistory }) !== zeroHistory) throw new Error('dashboard valid zero history was rejected');
+  const fractionalHistory = { ...history.history, rows: [productionHistoryRow] };
+  if (normalizeHistoryResponse({ history: fractionalHistory }) !== fractionalHistory) throw new Error('dashboard rejected backend fractional timestamps');
+  for (const field of ['started_at', 'ended_at']) {
+    for (const malformedTimestamp of [NaN, Infinity, -1, '1787765507.2376719', false, {}]) {
+      const malformedTimestampHistory = {
+        ...fractionalHistory,
+        rows: [{ ...fractionalHistory.rows[0], [field]: malformedTimestamp }]
+      };
+      if (normalizeHistoryResponse({ history: malformedTimestampHistory })?.available !== false) {
+        throw new Error(`dashboard accepted malformed ${field}: ${String(malformedTimestamp)}`);
+      }
+    }
+  }
+  const nullStartedAt = { ...fractionalHistory, rows: [{ ...fractionalHistory.rows[0], started_at: null }] };
+  if (normalizeHistoryResponse({ history: nullStartedAt })?.available !== false) throw new Error('dashboard accepted null started_at');
+  const activeFractionalHistory = { ...fractionalHistory, rows: [{ ...fractionalHistory.rows[0], ended_at: null, is_active: true }] };
+  if (normalizeHistoryResponse({ history: activeFractionalHistory }) !== activeFractionalHistory) throw new Error('dashboard rejected nullable ended_at');
+  for (const malformedIntegerHistory of [
+    { ...fractionalHistory, rows: [{ ...fractionalHistory.rows[0], duration_seconds: 125.5 }] },
+    { ...fractionalHistory, series: { ...fractionalHistory.series, points: [{ ...fractionalHistory.series.points[0], bucket_start: 1784851200.5 }] } },
+    { ...fractionalHistory, row_count: 1.5 }
+  ]) {
+    if (normalizeHistoryResponse({ history: malformedIntegerHistory })?.available !== false) throw new Error('dashboard accepted fractional integer-only history field');
+  }
   if (normalizeHistoryResponse(history) !== history.history) throw new Error('dashboard valid history response was rejected');
   for (const [fixture, expectedUsed, expectedRemaining] of [
     [{ remaining_percent: 97 }, 3, 97],
@@ -344,7 +369,7 @@ function contrastRatio(foreground, background) {
   const initialHistoryCall = calls.find(path => path.includes('/history?'));
   if (!initialHistoryCall || !initialHistoryCall.includes('scope=all')) throw new Error('dashboard initial request is not all-profile: ' + calls.join(', '));
   const rendered = flatten(render());
-  if (!rendered.includes('v0.7.4')) throw new Error('dashboard visible plugin version missing');
+  if (!rendered.includes('v0.7.5')) throw new Error('dashboard visible plugin version missing');
   const renderedOrder = ['Utilisation des tokens', 'Consommation par profil', 'Sessions récentes'].map(label => rendered.indexOf(label));
   if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('dashboard chart/profile/recent order is incorrect: ' + renderedOrder);
   if (!rendered.includes('35% restants')) throw new Error('provider quota fallback was not rendered');

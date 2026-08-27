@@ -16,9 +16,9 @@ that separates three facts people often blur together:
 The plugin supports the native Hermes Desktop app and the Hermes Web Dashboard.
 It never reads prompt or message content.
 
-Current plugin version: **v0.7.4**.
+Current plugin version: **v0.7.5**.
 
-Merging or publishing v0.7.4 distributes artifacts only; neither action deploys, restarts,
+Merging or publishing v0.7.5 distributes artifacts only; neither action deploys, restarts,
 upgrades, or changes any Hermes installation. Installation or migration remains a separate,
 explicit operator action.
 
@@ -149,7 +149,7 @@ if [ -e "$UNIFIED" ] || [ -L "$UNIFIED" ]; then
 fi
 ```
 
-The complete guide then resolves `v0.7.4` to an exact commit, installs it with
+The complete guide then resolves `v0.7.5` to an exact commit, installs it with
 `hermes plugins install ... --enable`, and verifies the installed clone's `HEAD`. That command
 enables the agent/Dashboard half only. For both a fresh Git install and a v0.7.2/v0.7.3
 split-tree migration, open Hermes Desktop **Settings → Plugins**, find **AI Usage Monitor** under

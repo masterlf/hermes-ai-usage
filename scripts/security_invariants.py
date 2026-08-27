@@ -18,7 +18,7 @@ CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 PACKAGE = ROOT / "package.json"
 MAKEFILE = ROOT / "Makefile"
 INSTALLER = ROOT / "scripts/install_release.py"
-VERSION = "0.7.4"
+VERSION = "0.7.5"
 FORBIDDEN_JS = {
     "innerHTML": "raw HTML sink",
     "outerHTML": "raw HTML sink",

@@ -112,6 +112,34 @@ for (const fixture of [
   if (normalized?.available !== false || Object.keys(normalized).length !== 1) throw new Error('Desktop accepted malformed history fixture: ' + String(fixture));
 }
 if (normalizeHistoryResponse({ history: zeroHistory }) !== zeroHistory) throw new Error('Desktop valid zero history was rejected');
+const fractionalHistory = {
+  ...zeroHistory,
+  rows: [JSON.parse('{"started_at":1787765507.2376719,"ended_at":1787765632.9876542,"model":"gpt-test","provider":"openai-codex","surface":"cli","source":"cli","workload_type":"subagent","profile":"security","duration_seconds":125,"is_active":false,"api_call_count":3,"input_tokens":100,"output_tokens":20,"cache_read_tokens":119880,"cache_write_tokens":0,"reasoning_tokens":5,"total_tokens":120000,"session_ref":"abcd12345678"}')],
+  row_count: 1
+};
+if (normalizeHistoryResponse({ history: fractionalHistory }) !== fractionalHistory) throw new Error('Desktop rejected backend fractional timestamps');
+for (const field of ['started_at', 'ended_at']) {
+  for (const malformedTimestamp of [NaN, Infinity, -1, '1787765507.2376719', false, {}]) {
+    const malformedTimestampHistory = {
+      ...fractionalHistory,
+      rows: [{ ...fractionalHistory.rows[0], [field]: malformedTimestamp }]
+    };
+    if (normalizeHistoryResponse({ history: malformedTimestampHistory })?.available !== false) {
+      throw new Error(`Desktop accepted malformed ${field}: ${String(malformedTimestamp)}`);
+    }
+  }
+}
+const nullStartedAt = { ...fractionalHistory, rows: [{ ...fractionalHistory.rows[0], started_at: null }] };
+if (normalizeHistoryResponse({ history: nullStartedAt })?.available !== false) throw new Error('Desktop accepted null started_at');
+const activeFractionalHistory = { ...fractionalHistory, rows: [{ ...fractionalHistory.rows[0], ended_at: null, is_active: true }] };
+if (normalizeHistoryResponse({ history: activeFractionalHistory }) !== activeFractionalHistory) throw new Error('Desktop rejected nullable ended_at');
+for (const malformedIntegerHistory of [
+  { ...fractionalHistory, rows: [{ ...fractionalHistory.rows[0], duration_seconds: 125.5 }] },
+  { ...fractionalHistory, series: { ...fractionalHistory.series, points: [{ bucket_start: 1784851200.5, sessions: 0, api_calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0, total_tokens: 0 }] } },
+  { ...fractionalHistory, row_count: 1.5 }
+]) {
+  if (normalizeHistoryResponse({ history: malformedIntegerHistory })?.available !== false) throw new Error('Desktop accepted fractional integer-only history field');
+}
 const normal = compositionOf({ input_tokens: 10, output_tokens: 20, reasoning_tokens: 8, cache_read_tokens: 60, cache_write_tokens: 10 });
 if (normal.nonCacheRead !== 40 || normal.rawTotal !== 100 || normal.additiveTotal !== 100 || normal.outputNonReasoning !== 12 || normal.reasoningOutputTenths !== 400) throw new Error('Desktop composition math is incorrect');
 if (normal.shareTenths.join(',') !== '100,200,600,100') throw new Error('Desktop top-level ratios are incorrect: ' + normal.shareTenths);
@@ -302,7 +330,7 @@ if (restCalls[restCalls.length - 1].includes('scope=all')) throw new Error('Desk
 sandbox.globalThis.__setHarnessStateful(false);
 const tree = resolveTree(page.render());
 const rendered = flatten(tree);
-if (!rendered.includes('v0.7.4')) throw new Error('Desktop visible plugin version missing');
+if (!rendered.includes('v0.7.5')) throw new Error('Desktop visible plugin version missing');
 const renderedOrder = ['Token usage', 'Usage by profile', 'Recent usage'].map(label => rendered.indexOf(label));
 if (!(renderedOrder[0] >= 0 && renderedOrder[0] < renderedOrder[1] && renderedOrder[1] < renderedOrder[2])) throw new Error('Desktop chart/profile/recent order is incorrect: ' + renderedOrder);
 if (!rendered.includes('Token usage')) throw new Error('Desktop usage chart missing: ' + rendered);
